@@ -24,6 +24,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Xml.Serialization;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -42,7 +43,7 @@ namespace WPinternals
         internal bool HasChanged = false;
 
         [XmlElement("Partition")]
-        public List<Partition> Partitions = new();
+        public List<Partition> Partitions = [];
 
         public GPT() // Only for serialization
         {
@@ -74,19 +75,21 @@ namespace WPinternals
 
             while (PartitionOffset < (TableOffset + TableSize))
             {
-                string Name = ByteOperations.ReadUnicodeString(GPTBuffer, PartitionOffset + 0x38, 0x48).TrimEnd(new char[] { (char)0, ' ' });
+                string Name = ByteOperations.ReadUnicodeString(GPTBuffer, PartitionOffset + 0x38, 0x48).TrimEnd([(char)0, ' ']);
                 if (Name.Length == 0)
                 {
                     break;
                 }
 
-                Partition CurrentPartition = new();
-                CurrentPartition.Name = Name;
-                CurrentPartition.FirstSector = ByteOperations.ReadUInt64(GPTBuffer, PartitionOffset + 0x20);
-                CurrentPartition.LastSector = ByteOperations.ReadUInt64(GPTBuffer, PartitionOffset + 0x28);
-                CurrentPartition.PartitionTypeGuid = ByteOperations.ReadGuid(GPTBuffer, PartitionOffset + 0x00);
-                CurrentPartition.PartitionGuid = ByteOperations.ReadGuid(GPTBuffer, PartitionOffset + 0x10);
-                CurrentPartition.Attributes = ByteOperations.ReadUInt64(GPTBuffer, PartitionOffset + 0x30);
+                Partition CurrentPartition = new()
+                {
+                    Name = Name,
+                    FirstSector = ByteOperations.ReadUInt64(GPTBuffer, PartitionOffset + 0x20),
+                    LastSector = ByteOperations.ReadUInt64(GPTBuffer, PartitionOffset + 0x28),
+                    PartitionTypeGuid = ByteOperations.ReadGuid(GPTBuffer, PartitionOffset + 0x00),
+                    PartitionGuid = ByteOperations.ReadGuid(GPTBuffer, PartitionOffset + 0x10),
+                    Attributes = ByteOperations.ReadUInt64(GPTBuffer, PartitionOffset + 0x30)
+                };
                 Partitions.Add(CurrentPartition);
                 PartitionOffset += PartitionEntrySize;
             }
@@ -275,7 +278,10 @@ namespace WPinternals
                             {
                                 StreamLengthInSectors = (ulong)DecompressedStream.Length / 0x200;
                             }
-                            catch { }
+                            catch (Exception ex)
+                            {
+                                LogFile.LogException(ex, LogType.FileOnly);
+                            }
                         }
 
                         if (NewPartition.LastSector == 0)
@@ -331,7 +337,7 @@ namespace WPinternals
                 }
             }
 
-            List<Partition> DynamicPartitions = new();
+            List<Partition> DynamicPartitions = [];
             if (Archive != null)
             {
                 // Partitions which are present in the archive, and which have no start-sector in the new GPT data (dynamic relocation),
@@ -471,7 +477,10 @@ namespace WPinternals
                         {
                             StreamLengthInSectors = (ulong)DecompressedStream.Length / 0x200;
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            LogFile.LogException(ex, LogType.FileOnly);
+                        }
                         DecompressedStream.Close();
 
                         UInt64 MaxPartitionSizeInSectors = OldPartition.SizeInSectors;
@@ -521,7 +530,10 @@ namespace WPinternals
                     {
                         StreamLengthInSectors = (ulong)DecompressedStream.Length / 0x200;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
                     DecompressedStream.Close();
                     if (NewPartition.SizeInSectors != StreamLengthInSectors)
                     {
@@ -545,7 +557,7 @@ namespace WPinternals
         internal void WritePartitions(string Path)
         {
             string DirPath = System.IO.Path.GetDirectoryName(Path);
-            if (!Directory.Exists(DirPath))
+            if (!string.IsNullOrEmpty(DirPath) && !Directory.Exists(DirPath))
             {
                 Directory.CreateDirectory(DirPath);
             }
@@ -557,6 +569,15 @@ namespace WPinternals
             StreamWriter FileWriter = new(Path);
             x.Serialize(FileWriter, this, ns);
             FileWriter.Close();
+        }
+
+        internal void WritePartitions(Stream Stream)
+        {
+            XmlSerializer x = new(typeof(GPT), "");
+
+            XmlSerializerNamespaces ns = new();
+            ns.Add("", "");
+            x.Serialize(Stream, this, ns);
         }
 
         internal static GPT ReadPartitions(string Path)

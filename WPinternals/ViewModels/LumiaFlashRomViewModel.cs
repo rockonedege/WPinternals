@@ -25,6 +25,9 @@ using System.IO.Compression;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using WPinternals.HelperClasses;
+using WPinternals.Models.UEFIApps.BootMgr;
+using WPinternals.Models.UEFIApps.Flash;
 
 namespace WPinternals
 {
@@ -73,7 +76,7 @@ namespace WPinternals
                 await SwitchModeViewModel.SwitchToWithProgress(PhoneNotifier, PhoneInterfaces.Lumia_Flash,
                     (msg, sub) =>
                         ActivateSubContext(new BusyViewModel(msg, sub)));
-                if (((NokiaFlashModel)PhoneNotifier.CurrentModel).ReadPhoneInfo(ExtendedInfo: false).FlashAppProtocolVersionMajor < 2)
+                if (((LumiaFlashAppModel)PhoneNotifier.CurrentModel).ReadPhoneInfo(ExtendedInfo: false).FlashAppProtocolVersionMajor < 2)
                 {
                     FlashPartitionsTask(EFIESPPath, MainOSPath, DataPath);
                 }
@@ -90,15 +93,13 @@ namespace WPinternals
 
         internal void FlashPartitionsTask(string EFIESPPath, string MainOSPath, string DataPath)
         {
-            new Thread(() =>
+            new Thread(async () =>
                 {
                     bool Result = true;
 
                     ActivateSubContext(new BusyViewModel("Initializing flash..."));
 
-                    NokiaFlashModel Phone = (NokiaFlashModel)PhoneNotifier.CurrentModel;
-
-                    GPT GPT = Phone.ReadGPT();
+                    GPT GPT = await LumiaUnlockBootloaderViewModel.ReadGPTFromFlashOrBootMgr(PhoneNotifier);
 
                     ulong TotalSizeSectors = 0;
                     int PartitionCount = 0;
@@ -154,6 +155,8 @@ namespace WPinternals
                         Result = false;
                     }
 
+                    LumiaFlashAppModel Phone = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
+
                     if ((MainOSNewSectorCount > 0) && (DataNewSectorCount > 0))
                     {
                         if ((MainOSNewSectorCount > MainOSOldSectorCount) || (DataNewSectorCount > DataOldSectorCount))
@@ -203,7 +206,7 @@ namespace WPinternals
                             {
                                 i++;
                                 Busy.Message = "Flashing partition EFIESP (" + i.ToString() + "/" + PartitionCount.ToString() + ")";
-                                Phone.FlashRawPartition(EFIESPPath, "EFIESP", Updater);
+                                Phone.FlashRawPartition(GPT, EFIESPPath, "EFIESP", Updater);
                             }
                         }
                         catch (Exception Ex)
@@ -221,7 +224,7 @@ namespace WPinternals
                             {
                                 i++;
                                 Busy.Message = "Flashing partition MainOS (" + i.ToString() + "/" + PartitionCount.ToString() + ")";
-                                Phone.FlashRawPartition(MainOSPath, "MainOS", Updater);
+                                Phone.FlashRawPartition(GPT, MainOSPath, "MainOS", Updater);
                             }
                         }
                         catch (Exception Ex)
@@ -239,7 +242,7 @@ namespace WPinternals
                             {
                                 i++;
                                 Busy.Message = "Flashing partition Data (" + i.ToString() + "/" + PartitionCount.ToString() + ")";
-                                Phone.FlashRawPartition(DataPath, "Data", Updater);
+                                Phone.FlashRawPartition(GPT, DataPath, "Data", Updater);
                             }
                         }
                         catch (Exception Ex)
@@ -268,7 +271,7 @@ namespace WPinternals
                 await SwitchModeViewModel.SwitchToWithProgress(PhoneNotifier, PhoneInterfaces.Lumia_Flash,
                     (msg, sub) =>
                         ActivateSubContext(new BusyViewModel(msg, sub)));
-                if (((NokiaFlashModel)PhoneNotifier.CurrentModel).ReadPhoneInfo(ExtendedInfo: false).FlashAppProtocolVersionMajor < 2)
+                if (((LumiaFlashAppModel)PhoneNotifier.CurrentModel).ReadPhoneInfo(ExtendedInfo: false).FlashAppProtocolVersionMajor < 2)
                 {
                     FlashArchiveTask(ArchivePath);
                 }
@@ -285,11 +288,9 @@ namespace WPinternals
 
         internal void FlashArchiveTask(string ArchivePath)
         {
-            new Thread(() =>
+            new Thread(async () =>
             {
                 ActivateSubContext(new BusyViewModel("Initializing flash..."));
-
-                NokiaFlashModel Phone = (NokiaFlashModel)PhoneNotifier.CurrentModel;
 
                 ulong TotalSizeSectors = 0;
                 int PartitionCount = 0;
@@ -302,7 +303,7 @@ namespace WPinternals
 
                 try
                 {
-                    GPT GPT = Phone.ReadGPT();
+                    GPT GPT = await LumiaUnlockBootloaderViewModel.ReadGPTFromFlashOrBootMgr(PhoneNotifier);
 
                     using FileStream FileStream = new(ArchivePath, FileMode.Open);
                     using ZipArchive Archive = new(FileStream, ZipArchiveMode.Read);
@@ -343,7 +344,10 @@ namespace WPinternals
                                 {
                                     StreamLengthInSectors = (ulong)DecompressedStream.Length / 0x200;
                                 }
-                                catch { }
+                                catch (Exception ex)
+                                {
+                                    LogFile.LogException(ex, LogType.FileOnly);
+                                }
 
                                 TotalSizeSectors += StreamLengthInSectors;
                                 PartitionCount++;
@@ -406,6 +410,8 @@ namespace WPinternals
                         return;
                     }
 
+                    LumiaFlashAppModel Phone = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
+
                     if (GPTChanged)
                     {
                         Phone.WriteGPT(GPT);
@@ -438,13 +444,16 @@ namespace WPinternals
                                 {
                                     StreamLengthInSectors = (ulong)DecompressedStream.Length / 0x200;
                                 }
-                                catch { }
+                                catch (Exception ex)
+                                {
+                                    LogFile.LogException(ex, LogType.FileOnly);
+                                }
 
                                 if (StreamLengthInSectors <= Partition.SizeInSectors)
                                 {
                                     i++;
                                     Busy.Message = "Flashing partition " + Partition.Name + " (" + i.ToString() + "/" + PartitionCount.ToString() + ")";
-                                    Phone.FlashRawPartition(DecompressedStream, Partition.Name, Updater);
+                                    Phone.FlashRawPartition(GPT, DecompressedStream, Partition.Name, Updater);
                                 }
                                 DecompressedStream.Close();
                             }
@@ -495,12 +504,12 @@ namespace WPinternals
 
         internal void FlashFFUTask(string FFUPath)
         {
-            new Thread(() =>
+            new Thread(async () =>
             {
                 bool Result = true;
 
-                NokiaFlashModel Phone = (NokiaFlashModel)PhoneNotifier.CurrentModel;
-                PhoneInfo Info = Phone.ReadPhoneInfo(false);
+                LumiaFlashAppModel Phone = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
+                LumiaFlashAppPhoneInfo Info = Phone.ReadPhoneInfo(false);
 
                 #region Remove bootloader changes
 
@@ -513,10 +522,13 @@ namespace WPinternals
 
                 if (Info.FlashAppProtocolVersionMajor >= 2)
                 {
-                    byte[] GPTChunk = LumiaUnlockBootloaderViewModel.GetGptChunk(Phone, 0x20000); // TODO: Get proper profile FFU and get ChunkSizeInBytes
+                    byte[] GPTChunk = await LumiaUnlockBootloaderViewModel.GetGptChunkFromFlashOrBootMgr(PhoneNotifier, 0x20000); // TODO: Get proper profile FFU and get ChunkSizeInBytes
                     GPT GPT = new(GPTChunk);
+
+                    Phone = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
+
                     FlashPart Part;
-                    List<FlashPart> FlashParts = new();
+                    List<FlashPart> FlashParts = [];
 
                     Partition NvBackupPartition = GPT.GetPartition("BACKUP_BS_NV");
                     if (NvBackupPartition != null)
@@ -592,14 +604,14 @@ namespace WPinternals
 
                         if (PhoneNotifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                         {
-                            ((NokiaFlashModel)PhoneNotifier.CurrentModel).SwitchToFlashAppContext();
+                            ((LumiaBootManagerAppModel)PhoneNotifier.CurrentModel).SwitchToFlashAppContext();
                         }
                     }
                 }
 
                 #endregion
 
-                Phone = (NokiaFlashModel)PhoneNotifier.CurrentModel;
+                Phone = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
 
                 ActivateSubContext(new BusyViewModel("Initializing flash..."));
 
@@ -658,11 +670,12 @@ namespace WPinternals
 
         internal void FlashMMOSTask(string MMOSPath)
         {
-            NokiaFlashModel Phone = (NokiaFlashModel)PhoneNotifier.CurrentModel;
             if (PhoneNotifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
             {
-                Phone.SwitchToFlashAppContext();
+                ((LumiaBootManagerAppModel)PhoneNotifier.CurrentModel).SwitchToFlashAppContext();
             }
+
+            LumiaFlashAppModel Phone = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
 
             new Thread(() =>
             {
@@ -753,8 +766,10 @@ namespace WPinternals
                 IsSwitchingInterface = false; // From here on a device will be forced to Flash mode again on this screen which is meant for flashing
                 Callback();
                 ActivateSubContext(null);
-            });
-            SuccessMessageViewModel.SubMessage = SubMessage;
+            })
+            {
+                SubMessage = SubMessage
+            };
             ActivateSubContext(SuccessMessageViewModel);
         }
 
@@ -765,8 +780,10 @@ namespace WPinternals
                 IsSwitchingInterface = false;
                 Callback();
                 ActivateSubContext(null);
-            });
-            ErrorMessageViewModel.SubMessage = SubMessage;
+            })
+            {
+                SubMessage = SubMessage
+            };
             ActivateSubContext(ErrorMessageViewModel);
         }
     }

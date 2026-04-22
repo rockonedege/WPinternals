@@ -26,15 +26,165 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia.UEFI.Flash;
+using WPinternals.Models.UEFIApps.BootMgr;
+using WPinternals.Models.UEFIApps.Flash;
+using WPinternals.Models.UEFIApps.PhoneInfo;
 
 namespace WPinternals
 {
     internal static class LumiaUnlockBootloaderViewModel
     {
+        /// <summary>
+        /// This function reads GPT from the device, while preserving the current application running.
+        /// This works whenever the device is unlocked or not, from Flash or Bootloader apps
+        /// </summary>
+        /// <returns></returns>
+        /// <exception cref="WPinternalsException">The device entered an unexpected mode.</exception>
+        public static async Task<GPT> ReadGPTFromFlashOrBootMgr(PhoneNotifierViewModel Notifier)
+        {
+            switch (Notifier.CurrentInterface)
+            {
+                case PhoneInterfaces.Lumia_Bootloader:
+                    {
+                        return ((LumiaBootManagerAppModel)Notifier.CurrentModel).ReadGPT();
+                    }
+                case PhoneInterfaces.Lumia_Flash:
+                    {
+                        LumiaFlashAppModel FlashModel = (LumiaFlashAppModel)Notifier.CurrentModel;
+
+                        if (FlashModel.CanReadGPT())
+                        {
+                            bool ModernFlashApp = FlashModel.ReadPhoneInfoFlashApp().FlashAppProtocolVersionMajor >= 2;
+
+                            if (ModernFlashApp)
+                            {
+                                FlashModel.SwitchToBootManagerContext();
+                            }
+                            else
+                            {
+                                FlashModel.ResetPhone();
+                                await Notifier.WaitForRemoval();
+                            }
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
+                            {
+                                await Notifier.WaitForArrival();
+                            }
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
+                            {
+                                throw new WPinternalsException("Unexpected Mode");
+                            }
+
+                            GPT GPT = ((LumiaBootManagerAppModel)Notifier.CurrentModel).ReadGPT();
+
+                            if (ModernFlashApp)
+                            {
+                                ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                            }
+                            else
+                            {
+                                ((LumiaBootManagerAppModel)Notifier.CurrentModel).ResetPhoneToFlashMode();
+                            }
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                            {
+                                await Notifier.WaitForArrival();
+                            }
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                            {
+                                throw new WPinternalsException("Unexpected Mode");
+                            }
+
+                            return GPT;
+                        }
+                        else
+                        {
+                            return FlashModel.ReadGPT();
+                        }
+                    }
+                default:
+                    {
+                        throw new WPinternalsException("Unexpected Mode");
+                    }
+            }
+        }
+
+        /// <summary>
+        /// This function reads GPT from the device, while preserving the current application running.
+        /// This works whenever the device is unlocked or not, from Flash or Bootloader apps
+        /// </summary>
+        /// <returns></returns>
+        /// <exception cref="WPinternalsException">The device entered an unexpected mode.</exception>
+        public static async Task<byte[]> GetGptChunkFromFlashOrBootMgr(PhoneNotifierViewModel Notifier, uint Size)
+        {
+            switch (Notifier.CurrentInterface)
+            {
+                case PhoneInterfaces.Lumia_Bootloader:
+                    {
+                        return ((LumiaBootManagerAppModel)Notifier.CurrentModel).GetGptChunk(Size);
+                    }
+                case PhoneInterfaces.Lumia_Flash:
+                    {
+                        LumiaFlashAppModel FlashModel = (LumiaFlashAppModel)Notifier.CurrentModel;
+
+                        if (FlashModel.CanReadGPT())
+                        {
+                            FlashModel.SwitchToBootManagerContext();
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
+                            {
+                                await Notifier.WaitForArrival();
+                            }
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
+                            {
+                                throw new WPinternalsException("Unexpected Mode");
+                            }
+
+                            byte[] GPT = ((LumiaBootManagerAppModel)Notifier.CurrentModel).GetGptChunk(Size);
+
+                            bool ModernFlashApp = ((LumiaBootManagerAppModel)Notifier.CurrentModel).ReadPhoneInfo().BootManagerProtocolVersionMajor >= 2;
+                            if (ModernFlashApp)
+                            {
+                                ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                            }
+                            else
+                            {
+                                ((LumiaBootManagerAppModel)Notifier.CurrentModel).ResetPhoneToFlashMode();
+                            }
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                            {
+                                await Notifier.WaitForArrival();
+                            }
+
+                            if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                            {
+                                throw new WPinternalsException("Unexpected Mode");
+                            }
+
+                            return GPT;
+                        }
+                        else
+                        {
+                            return FlashModel.GetGptChunk(Size);
+                        }
+                    }
+                default:
+                    {
+                        throw new WPinternalsException("Unexpected Mode");
+                    }
+            }
+        }
+
         // TODO: Add logging
         private static void PerformSoftBrick(PhoneNotifierViewModel Notifier, FFU FFU)
         {
-            NokiaFlashModel FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
+            LumiaFlashAppModel FlashModel = (LumiaFlashAppModel)Notifier.CurrentModel;
 
             // Send FFU headers
             UInt64 CombinedFFUHeaderSize = FFU.HeaderSize;
@@ -51,8 +201,7 @@ namespace WPinternals
             FlashModel.SendFfuPayloadV1(EmptyChunk);
 
             // Reboot to Qualcomm Emergency mode
-            byte[] RebootCommand = new byte[] { 0x4E, 0x4F, 0x4B, 0x52 }; // NOKR
-            FlashModel.ExecuteRawVoidMethod(RebootCommand);
+            FlashModel.ResetPhone();
         }
 
         private static void SendLoader(PhoneNotifierViewModel PhoneNotifier, List<QualcommPartition> PossibleLoaders)
@@ -82,7 +231,10 @@ namespace WPinternals
                         Result = true;
                         LogFile.Log("Loader sent successfully");
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
 
                     if (Result)
                     {
@@ -136,7 +288,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -146,7 +298,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -156,7 +308,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -202,7 +354,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -212,7 +364,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -222,7 +374,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -270,7 +422,7 @@ namespace WPinternals
 
             try
             {
-                if (Notifier.CurrentModel is NokiaFlashModel)
+                if (Notifier.CurrentModel is LumiaFlashAppModel)
                 {
                     await LumiaRelockUEFI(Notifier, FFUPath, true, SetWorkingStatus, UpdateWorkingStatus, null, (string Message, string SubMessage) =>
                     {
@@ -287,6 +439,16 @@ namespace WPinternals
                     if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                     {
                         await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            await Notifier.WaitForArrival();
+                        }
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            throw new WPinternalsException("Unexpected Mode");
+                        }
                     }
                 }
 
@@ -317,9 +479,9 @@ namespace WPinternals
                     throw new Exception("Error: Parsing FFU-file failed.");
                 }
 
-                if (Notifier.CurrentModel is NokiaFlashModel)
+                if (Notifier.CurrentModel is LumiaFlashAppModel)
                 {
-                    FlashVersion FlashVersion = ((NokiaFlashModel)Notifier.CurrentModel).GetFlashVersion();
+                    FlashVersion FlashVersion = ((LumiaFlashAppModel)Notifier.CurrentModel).GetFlashVersion();
                     if (FlashVersion == null)
                     {
                         throw new Exception("Error: The version of the Flash Application on the phone could not be determined.");
@@ -330,7 +492,7 @@ namespace WPinternals
                         throw new Exception("Error: The version of the Flash Application on the phone is too old. Update your phone using Windows Updates or flash a newer ROM to your phone. Then try again.");
                     }
 
-                    UefiSecurityStatusResponse SecurityStatus = ((NokiaFlashModel)Notifier.CurrentModel).ReadSecurityStatus();
+                    UefiSecurityStatusResponse SecurityStatus = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadSecurityStatus();
                     IsBootLoaderUnlocked = SecurityStatus.AuthenticationStatus || SecurityStatus.RdcStatus || !SecurityStatus.SecureFfuEfuseStatus;
                 }
 
@@ -347,33 +509,9 @@ namespace WPinternals
 #endif
 
                 GPT NewGPT = null;
-                if (Notifier.CurrentModel is NokiaFlashModel)
+                if (Notifier.CurrentModel is LumiaFlashAppModel or LumiaBootManagerAppModel)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ResetPhone();
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
-                    {
-                        await Notifier.WaitForArrival();
-                    }
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
-                    {
-                        throw new WPinternalsException("Phone is in an unexpected mode.", "The phone should have been detected in bootloader mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
-                    }
-
-                    NewGPT = ((NokiaFlashModel)Notifier.CurrentModel).ReadGPT();
-
-                    await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
-                    {
-                        await Notifier.WaitForArrival();
-                    }
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
-                    {
-                        throw new WPinternalsException("Phone is in an unexpected mode.", "The phone should have been detected in flash mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
-                    }
+                    NewGPT = await ReadGPTFromFlashOrBootMgr(Notifier);
                 }
                 else
                 {
@@ -445,7 +583,7 @@ namespace WPinternals
                 }
                 else if (Notifier.CurrentInterface != PhoneInterfaces.Qualcomm_Flash)
                 {
-                    RootKeyHash = ((NokiaFlashModel)Notifier.CurrentModel).ReadParam("RRKH");
+                    RootKeyHash = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadParam("RRKH");
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Qualcomm_Flash)
@@ -570,7 +708,7 @@ namespace WPinternals
                 if (IsBootLoaderUnlocked)
                 // Flash phone in Flash app
                 {
-                    NokiaFlashModel CurrentModel = (NokiaFlashModel)Notifier.CurrentModel;
+                    LumiaFlashAppModel CurrentModel = (LumiaFlashAppModel)Notifier.CurrentModel;
                     LogFile.Log("Start flashing in Custom Flash mode");
 
                     UInt64 TotalSectorCount = (UInt64)0x21 + 1 +
@@ -586,11 +724,11 @@ namespace WPinternals
                     Progress.SetProgress(0x21);
 
                     LogFile.Log("Flash SBL2 at 0x" + ((UInt32)NewGPT.GetPartition("SBL2").FirstSector * 0x200).ToString("X8"));
-                    CurrentModel.FlashRawPartition(SBL2, "SBL2", Progress);
+                    CurrentModel.FlashRawPartition(NewGPT, SBL2, "SBL2", Progress);
                     LogFile.Log("Flash SBL3 at 0x" + ((UInt32)NewGPT.GetPartition("SBL3").FirstSector * 0x200).ToString("X8"));
-                    CurrentModel.FlashRawPartition(SBL3, "SBL3", Progress);
+                    CurrentModel.FlashRawPartition(NewGPT, SBL3, "SBL3", Progress);
                     LogFile.Log("Flash UEFI at 0x" + ((UInt32)NewGPT.GetPartition("UEFI").FirstSector * 0x200).ToString("X8"));
-                    CurrentModel.FlashRawPartition(UEFI, "UEFI", Progress);
+                    CurrentModel.FlashRawPartition(NewGPT, UEFI, "UEFI", Progress);
 
                     // phone is in flash mode, we can exit
                 }
@@ -709,6 +847,16 @@ namespace WPinternals
                     if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                     {
                         await SwitchModeViewModel.SwitchToWithStatus(Notifier, PhoneInterfaces.Lumia_Flash, SetWorkingStatus, UpdateWorkingStatus);
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            await Notifier.WaitForArrival();
+                        }
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            throw new WPinternalsException("Unexpected Mode");
+                        }
                     }
                 }
                 else
@@ -729,7 +877,30 @@ namespace WPinternals
                     throw new WPinternalsException("Phone is in an unexpected mode.", "The phone should have been detected in flash mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
                 }
 
-                NokiaFlashModel FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
+                if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
+                {
+                    bool ModernFlashApp = ((LumiaBootManagerAppModel)Notifier.CurrentModel).ReadPhoneInfo().BootManagerProtocolVersionMajor >= 2;
+                    if (ModernFlashApp)
+                    {
+                        ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                    }
+                    else
+                    {
+                        ((LumiaBootManagerAppModel)Notifier.CurrentModel).ResetPhoneToFlashMode();
+                    }
+                }
+
+                if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                {
+                    await Notifier.WaitForArrival();
+                }
+
+                if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                {
+                    throw new WPinternalsException("Unexpected Mode");
+                }
+
+                LumiaFlashAppModel FlashModel = (LumiaFlashAppModel)Notifier.CurrentModel;
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Flash && FlashModel.ReadParam("FS")[3] > 0)
                 {
                     ExitSuccess("Bootloader is restored", "NOTE: You need to flash a stock ROM because you recovered a phone from a bootloader unlock failure.");
@@ -740,7 +911,7 @@ namespace WPinternals
 
                     if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                     {
-                        ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                        ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                     }
 
                     if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -750,7 +921,7 @@ namespace WPinternals
 
                     if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                     {
-                        ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                        ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                     }
 
                     if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -760,7 +931,7 @@ namespace WPinternals
 
                     if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                     {
-                        ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                        ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                     }
 
                     if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -840,9 +1011,9 @@ namespace WPinternals
                     throw new Exception("Error: Parsing FFU-file failed.");
                 }
 
-                if (Notifier.CurrentModel is NokiaFlashModel)
+                if (Notifier.CurrentModel is LumiaFlashAppModel)
                 {
-                    FlashVersion FlashVersion = ((NokiaFlashModel)Notifier.CurrentModel).GetFlashVersion();
+                    FlashVersion FlashVersion = ((LumiaFlashAppModel)Notifier.CurrentModel).GetFlashVersion();
                     if (FlashVersion == null)
                     {
                         throw new Exception("Error: The version of the Flash Application on the phone could not be determined.");
@@ -853,7 +1024,7 @@ namespace WPinternals
                         throw new Exception("Error: The version of the Flash Application on the phone is too old. Update your phone using Windows Updates or flash a newer ROM to your phone. Then try again.");
                     }
 
-                    UefiSecurityStatusResponse SecurityStatus = ((NokiaFlashModel)Notifier.CurrentModel).ReadSecurityStatus();
+                    UefiSecurityStatusResponse SecurityStatus = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadSecurityStatus();
                     IsBootLoaderUnlocked = SecurityStatus.AuthenticationStatus || SecurityStatus.RdcStatus || !SecurityStatus.SecureFfuEfuseStatus;
                 }
 
@@ -901,33 +1072,9 @@ namespace WPinternals
 #endif
 
                 GPT NewGPT = null;
-                if (Notifier.CurrentModel is NokiaFlashModel)
+                if (Notifier.CurrentModel is LumiaFlashAppModel or LumiaBootManagerAppModel)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ResetPhone();
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
-                    {
-                        await Notifier.WaitForArrival();
-                    }
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
-                    {
-                        throw new WPinternalsException("Phone is in an unexpected mode.", "The phone should have been detected in bootloader mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
-                    }
-
-                    NewGPT = ((NokiaFlashModel)Notifier.CurrentModel).ReadGPT();
-
-                    await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
-                    {
-                        await Notifier.WaitForArrival();
-                    }
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
-                    {
-                        throw new WPinternalsException("Phone is in an unexpected mode.", "The phone should have been detected in flash mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
-                    }
+                    NewGPT = await ReadGPTFromFlashOrBootMgr(Notifier);
                 }
                 else
                 {
@@ -1010,7 +1157,7 @@ namespace WPinternals
                 }
                 else if (Notifier.CurrentInterface != PhoneInterfaces.Qualcomm_Flash)
                 {
-                    RootKeyHash = ((NokiaFlashModel)Notifier.CurrentModel).ReadParam("RRKH");
+                    RootKeyHash = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadParam("RRKH");
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Qualcomm_Flash)
@@ -1249,7 +1396,7 @@ namespace WPinternals
                 if (IsBootLoaderUnlocked)
                 // Flash phone in Flash app
                 {
-                    NokiaFlashModel CurrentModel = (NokiaFlashModel)Notifier.CurrentModel;
+                    LumiaFlashAppModel CurrentModel = (LumiaFlashAppModel)Notifier.CurrentModel;
                     LogFile.Log("Start flashing in Custom Flash mode");
 
                     UInt64 TotalSectorCount = (UInt64)0x21 + 1 +
@@ -1267,15 +1414,15 @@ namespace WPinternals
                     if (ExtraSector != null)
                     {
                         LogFile.Log("Flash EXT at 0x" + ((UInt32)NewGPT.GetPartition("HACK").FirstSector * 0x200).ToString("X8"));
-                        CurrentModel.FlashRawPartition(ExtraSector, "HACK", Progress);
+                        CurrentModel.FlashRawPartition(NewGPT, ExtraSector, "HACK", Progress);
                     }
 
                     LogFile.Log("Flash SBL2 at 0x" + ((UInt32)NewGPT.GetPartition("SBL2").FirstSector * 0x200).ToString("X8"));
-                    CurrentModel.FlashRawPartition(SBL2, "SBL2", Progress);
+                    CurrentModel.FlashRawPartition(NewGPT, SBL2, "SBL2", Progress);
                     LogFile.Log("Flash SBL3 at 0x" + ((UInt32)NewGPT.GetPartition("SBL3").FirstSector * 0x200).ToString("X8"));
-                    CurrentModel.FlashRawPartition(SBL3, "SBL3", Progress);
+                    CurrentModel.FlashRawPartition(NewGPT, SBL3, "SBL3", Progress);
                     LogFile.Log("Flash UEFI at 0x" + ((UInt32)NewGPT.GetPartition("UEFI").FirstSector * 0x200).ToString("X8"));
-                    CurrentModel.FlashRawPartition(UEFI, "UEFI", Progress);
+                    CurrentModel.FlashRawPartition(NewGPT, UEFI, "UEFI", Progress);
 
                     // phone is in flash mode, we can exit
                 }
@@ -1348,6 +1495,7 @@ namespace WPinternals
                     LogFile.Log("Flash MBR at 0x" + ((UInt32)0).ToString("X8"));
                     Flasher.Flash(0, MBR, Progress, 0, 0x200);
 
+                    // TIMEOUT
                     LogFile.Log("Flash GPT at 0x" + ((UInt32)0x200).ToString("X8"));
                     Flasher.Flash(0x200, GPT, Progress, 0, 0x41FF); // Bad bounds-check in the flash-loader prohibits to write the last byte.
 
@@ -1400,6 +1548,16 @@ namespace WPinternals
                     if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                     {
                         await SwitchModeViewModel.SwitchToWithStatus(Notifier, PhoneInterfaces.Lumia_Flash, SetWorkingStatus, UpdateWorkingStatus);
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            await Notifier.WaitForArrival();
+                        }
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            throw new WPinternalsException("Unexpected Mode");
+                        }
                     }
 
                     // phone is in flash mode, we can exit
@@ -1420,7 +1578,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -1430,7 +1588,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -1440,7 +1598,7 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ContinueBoot();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).ContinueBoot();
                 }
 
                 if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Normal)
@@ -1462,54 +1620,6 @@ namespace WPinternals
             {
                 LogFile.EndAction("UnlockBootloader");
             }
-        }
-
-        internal static byte[] GetGptChunk(NokiaFlashModel FlashModel, UInt32 Size)
-        {
-            // This function is also used to generate a dummy chunk to flash for testing.
-            // The dummy chunk will contain the GPT, so it can be flashed to the first sectors for testing.
-            byte[] GPTChunk = new byte[Size];
-
-            PhoneInfo Info = FlashModel.ReadPhoneInfo(ExtendedInfo: false);
-            FlashAppType OriginalAppType = Info.App;
-            bool Switch = (Info.App != FlashAppType.BootManager) && Info.IsBootloaderSecure;
-            if (Switch)
-            {
-                FlashModel.SwitchToBootManagerContext();
-            }
-
-            byte[] Request = new byte[0x04];
-            const string Header = "NOKT";
-
-            System.Buffer.BlockCopy(System.Text.Encoding.ASCII.GetBytes(Header), 0, Request, 0, Header.Length);
-
-            byte[] Buffer = FlashModel.ExecuteRawMethod(Request);
-            if ((Buffer == null) || (Buffer.Length < 0x4408))
-            {
-                throw new InvalidOperationException("Unable to read GPT!");
-            }
-
-            UInt16 Error = (UInt16)((Buffer[6] << 8) + Buffer[7]);
-            if (Error > 0)
-            {
-                throw new NotSupportedException("ReadGPT: Error 0x" + Error.ToString("X4"));
-            }
-
-            System.Buffer.BlockCopy(Buffer, 8, GPTChunk, 0, 0x4400);
-
-            if (Switch)
-            {
-                if (OriginalAppType == FlashAppType.FlashApp)
-                {
-                    FlashModel.SwitchToFlashAppContext();
-                }
-                else
-                {
-                    FlashModel.SwitchToPhoneInfoAppContext();
-                }
-            }
-
-            return GPTChunk;
         }
 
         // Magic!
@@ -1544,7 +1654,7 @@ namespace WPinternals
             {
                 GPT GPT = null;
                 Partition Target = null;
-                NokiaFlashModel FlashModel = null;
+                LumiaFlashAppModel FlashModel = null;
 
                 LogFile.Log("Command: Relock phone", LogType.FileAndConsole);
 
@@ -1555,26 +1665,12 @@ namespace WPinternals
 
                 byte[] EFIESPBackup = null;
 
-                PhoneInfo Info = ((NokiaFlashModel)Notifier.CurrentModel).ReadPhoneInfo();
+                LumiaFlashAppPhoneInfo Info = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadPhoneInfo();
                 bool IsSpecB = Info.FlashAppProtocolVersionMajor >= 2;
                 bool UndoEFIESPPadding = false;
 
-                if (!IsSpecB)
-                {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ResetPhone();
+                byte[] GPTChunk = await GetGptChunkFromFlashOrBootMgr(Notifier, 0x20000);
 
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
-                    {
-                        await Notifier.WaitForArrival();
-                    }
-
-                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
-                    {
-                        throw new WPinternalsException("Phone is in an unexpected mode.", "The phone should have been detected in bootloader mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
-                    }
-                }
-
-                byte[] GPTChunk = GetGptChunk((NokiaFlashModel)Notifier.CurrentModel, 0x20000);
                 GPT = new GPT(GPTChunk);
                 bool GPTChanged = false;
                 Partition IsUnlockedPartitionSBL3 = GPT.GetPartition("IS_UNLOCKED_SBL3");
@@ -1611,7 +1707,7 @@ namespace WPinternals
                             await SwitchModeViewModel.SwitchToWithStatus(Notifier, PhoneInterfaces.Lumia_MassStorage, SetWorkingStatus, UpdateWorkingStatus);
                         }
 
-                        if (!(Notifier.CurrentModel is MassStorage))
+                        if (Notifier.CurrentModel is not MassStorage)
                         {
                             throw new WPinternalsException("Failed to switch to Mass Storage mode");
                         }
@@ -1696,8 +1792,13 @@ namespace WPinternals
                             await Notifier.WaitForArrival();
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                        LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                        LogFile.Log(ex.Message, LogType.FileAndConsole);
+                        LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                         // If switching to mass storage mode failed, then we just skip that part. This might be a half unlocked phone.
                         LogFile.Log("Skipping Mass Storage mode", LogType.FileAndConsole);
                     }
@@ -1709,16 +1810,24 @@ namespace WPinternals
                     await SwitchModeViewModel.SwitchToWithStatus(Notifier, PhoneInterfaces.Lumia_Flash, SetWorkingStatus, UpdateWorkingStatus);
                 }
 
-                if ((Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader) && (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash))
+                if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
+                {
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                }
+
+                if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
                 {
                     await Notifier.WaitForArrival();
                 }
 
+                if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                {
+                    throw new WPinternalsException("Unexpected Mode");
+                }
+
                 SetWorkingStatus("Flashing...", "The phone may reboot a couple of times. Just wait for it.", null, Status: WPinternalsStatus.Initializing);
 
-                ((NokiaFlashModel)Notifier.CurrentModel).SwitchToFlashAppContext();
-
-                List<FlashPart> FlashParts = new();
+                List<FlashPart> FlashParts = [];
 
                 if (UndoEFIESPPadding)
                 {
@@ -1727,7 +1836,7 @@ namespace WPinternals
 
                 FlashPart Part;
 
-                FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
+                FlashModel = (LumiaFlashAppModel)Notifier.CurrentModel;
 
                 // Remove IS_UNLOCKED flag in GPT
                 Partition IsUnlockedPartition = GPT.GetPartition("IS_UNLOCKED");
@@ -1785,7 +1894,7 @@ namespace WPinternals
 
                 // We should only clear NV if there was no backup NV to be restored and the current NV contains the SB unlock.
                 bool NvCleared = false;
-                Info = ((NokiaFlashModel)Notifier.CurrentModel).ReadPhoneInfo();
+                Info = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadPhoneInfo();
                 if ((NvBackupPartition == null) && !Info.UefiSecureBootEnabled)
                 {
                     // ClearNV
@@ -1854,13 +1963,20 @@ namespace WPinternals
 
                     if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                     {
-                        ((NokiaFlashModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                        ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            await Notifier.WaitForArrival();
+                        }
                     }
 
-                    if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Flash)
+                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
                     {
-                        await LumiaFlashParts(Notifier, FFUPath, false, false, null, DoResetFirst, ClearFlashingStatusAtEnd: true, ShowProgress: false);
+                        throw new WPinternalsException("Unexpected Mode");
                     }
+
+                    await LumiaFlashParts(Notifier, FFUPath, false, false, null, DoResetFirst, ClearFlashingStatusAtEnd: true, ShowProgress: false);
                 }
 
                 LogFile.Log("Phone is relocked", LogType.FileAndConsole);
@@ -1883,7 +1999,7 @@ namespace WPinternals
         internal static async Task LumiaUnlockUEFI(PhoneNotifierViewModel Notifier, string ProfileFFUPath, string EDEPath, string SupportedFFUPath, SetWorkingStatus SetWorkingStatus = null, UpdateWorkingStatus UpdateWorkingStatus = null, ExitSuccess ExitSuccess = null, ExitFailure ExitFailure = null, bool ExperimentalSpecBEFIESPUnlock = false, bool ExperimentalSpecAEFIESPUnlock = true, bool ReUnlockDevice = false)
         {
             LogFile.BeginAction("UnlockBootloader");
-            NokiaFlashModel FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
+            LumiaFlashAppModel FlashModel = (LumiaFlashAppModel)Notifier.CurrentModel;
 
             if (SetWorkingStatus == null)
             {
@@ -1907,7 +2023,7 @@ namespace WPinternals
 
             try
             {
-                PhoneInfo Info = FlashModel.ReadPhoneInfo();
+                LumiaFlashAppPhoneInfo Info = FlashModel.ReadPhoneInfo();
                 bool IsSpecB = Info.FlashAppProtocolVersionMajor >= 2;
 
                 if (ProfileFFUPath == null)
@@ -1954,7 +2070,7 @@ namespace WPinternals
 
                 LumiaPatchEFIESP(SupportedFFU, UnlockedEFIESP, IsSpecB);
 
-                byte[] GPTChunk = GetGptChunk(FlashModel, (UInt32)ProfileFFU.ChunkSize);
+                byte[] GPTChunk = await GetGptChunkFromFlashOrBootMgr(Notifier, (UInt32)ProfileFFU.ChunkSize);
                 byte[] GPTChunkBackup = new byte[GPTChunk.Length];
                 Buffer.BlockCopy(GPTChunk, 0, GPTChunkBackup, 0, GPTChunk.Length);
                 GPT GPT = new(GPTChunk);
@@ -1963,7 +2079,7 @@ namespace WPinternals
                 LogFile.Log("Enabling Test Signing", LogType.FileAndConsole);
                 SetWorkingStatus("Enabling Test Signing", null, null);
 
-                List<FlashPart> Parts = new();
+                List<FlashPart> Parts = [];
                 FlashPart Part;
 
                 // Now add NV partition
@@ -1992,10 +2108,10 @@ namespace WPinternals
                 Part = new FlashPart();
                 Partition TargetPartition = GPT.GetPartition("UEFI_BS_NV");
                 Part.StartSector = (UInt32)TargetPartition.FirstSector; // GPT is prepared for 64-bit sector-offset, but flash app isn't.
-                string SBRes = IsSpecB ? "WPinternals.SB" : "WPinternals.SBA";
+                string SBRes = IsSpecB ? "WPinternals.Assets.SB" : "WPinternals.Assets.SBA";
                 Part.Stream = new SeekableStream(() =>
                 {
-                    var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                    System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
 
                     // Magic!
                     // The SB(A) resource is a compressed version of a raw NV-variable-partition.
@@ -2003,7 +2119,7 @@ namespace WPinternals
                     // It overwrites the variable in a different NV-partition than where this variable is stored usually.
                     // This normally leads to endless-loops when the NV-variables are enumerated.
                     // But the partition contains an extra hack to break out the endless loops.
-                    var stream = assembly.GetManifestResourceStream(SBRes);
+                    Stream stream = assembly.GetManifestResourceStream(SBRes);
 
                     return new DecompressedStream(stream);
                 });
@@ -2039,8 +2155,8 @@ namespace WPinternals
 
                 if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
                 {
-                    FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
-                    FlashModel.SwitchToFlashAppContext();
+                    ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                    FlashModel = ((LumiaFlashAppModel)Notifier.CurrentModel);
                 }
 
                 GPTChanged = false;
@@ -2055,7 +2171,7 @@ namespace WPinternals
                     ShouldApplyOldEFIESPMethod = false;
                 }
 
-                Parts = ShouldApplyOldEFIESPMethod ? new List<FlashPart>() : LumiaGenerateEFIESPFlashPayload(UnlockedEFIESP, GPT, ProfileFFU, IsSpecB);
+                Parts = ShouldApplyOldEFIESPMethod ? [] : LumiaGenerateEFIESPFlashPayload(UnlockedEFIESP, GPT, ProfileFFU, IsSpecB);
                 Part = null;
 
                 UInt32 OriginalEfiespSizeInSectors = (UInt32)GPT.GetPartition("EFIESP").SizeInSectors;
@@ -2205,7 +2321,7 @@ namespace WPinternals
 
                 if (!IsSpecB && !SBL3Eng)
                 {
-                    ((NokiaFlashModel)Notifier.CurrentModel).ResetPhone();
+                    ((LumiaFlashAppModel)Notifier.CurrentModel).ResetPhone();
 
                     LogFile.Log("Bootloader unlocked!", LogType.FileAndConsole);
                     ExitSuccess("Bootloader unlocked successfully!", null);
@@ -2249,7 +2365,18 @@ namespace WPinternals
 
                     SetWorkingStatus("Problem detected, rolling back...", ErrorMessage);
                     await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                    Parts = new List<FlashPart>();
+
+                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                    {
+                        await Notifier.WaitForArrival();
+                    }
+
+                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                    {
+                        throw new WPinternalsException("Unexpected Mode");
+                    }
+
+                    Parts = [];
 
                     // Restore original GPT, which will also reference the original NV.
                     Part = new FlashPart
@@ -2341,7 +2468,7 @@ namespace WPinternals
                     if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Bootloader)
                     {
                         throw new WPinternalsException("Phone is in wrong mode", "The phone should have been detected in bootloader mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
-                    } ((NokiaFlashModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                    } ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
 
                     UInt32 OriginalEfiespFirstSector;
                     if (!ReUnlockDevice)
@@ -2425,7 +2552,7 @@ namespace WPinternals
                         GPT.Partitions.Add(IsUnlockedFlag);
                     }
 
-                    Parts = new List<FlashPart>();
+                    Parts = [];
                     GPT.Rebuild();
                     Part = new FlashPart
                     {
@@ -2479,6 +2606,16 @@ namespace WPinternals
                     {
                         SetWorkingStatus("Rebooting phone...");
                         await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            await Notifier.WaitForArrival();
+                        }
+
+                        if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                        {
+                            throw new WPinternalsException("Unexpected Mode");
+                        }
                     }
                     else
                     {
@@ -2501,7 +2638,29 @@ namespace WPinternals
                             throw new WPinternalsException("Phone is in wrong mode", "The phone should have been detected in bootloader mode. Instead it has been detected in " + Notifier.CurrentInterface.ToString() + " mode.");
                         }
                     }
-                    ((NokiaFlashModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+
+                    if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader)
+                    {
+                        bool ModernFlashApp = ((LumiaBootManagerAppModel)Notifier.CurrentModel).ReadPhoneInfo().BootManagerProtocolVersionMajor >= 2;
+                        if (ModernFlashApp)
+                        {
+                            ((LumiaBootManagerAppModel)Notifier.CurrentModel).SwitchToFlashAppContext();
+                        }
+                        else
+                        {
+                            ((LumiaBootManagerAppModel)Notifier.CurrentModel).ResetPhoneToFlashMode();
+                        }
+                    }
+
+                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                    {
+                        await Notifier.WaitForArrival();
+                    }
+
+                    if (Notifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                    {
+                        throw new WPinternalsException("Unexpected Mode");
+                    }
 
                     Parts = LumiaGenerateEFIESPFlashPayload(UnlockedEFIESP, GPT, ProfileFFU, IsSpecB);
 
@@ -2514,7 +2673,7 @@ namespace WPinternals
 
                     if (!IsSpecB)
                     {
-                        ((NokiaFlashModel)Notifier.CurrentModel).ResetPhone();
+                        ((LumiaFlashAppModel)Notifier.CurrentModel).ResetPhone();
                     }
                 }
 
@@ -2563,11 +2722,13 @@ namespace WPinternals
 
             byte[] SecondEFIESP = NewEFIESP.Skip((int)SectorSize * ReservedOGSectors).Take((int)(NewEFIESP.Length - (ReservedSectors * SectorSize))).ToArray();
 
-            List<FlashPart> Parts = new();
+            List<FlashPart> Parts = [];
 
-            FlashPart Part = new();
-            Part.StartSector = (uint)EFIESP.FirstSector;
-            Part.Stream = new MemoryStream(FirstSector);
+            FlashPart Part = new()
+            {
+                StartSector = (uint)EFIESP.FirstSector,
+                Stream = new MemoryStream(FirstSector)
+            };
             Parts.Add(Part);
 
             Part = new FlashPart
@@ -2594,11 +2755,13 @@ namespace WPinternals
 
             byte[] FirstSector = DeviceFFU.GetPartition("EFIESP").Take(EFIESPFirstPartSize).ToArray();
 
-            List<FlashPart> Parts = new();
+            List<FlashPart> Parts = [];
 
-            FlashPart Part = new();
-            Part.StartSector = (uint)EFIESP.FirstSector;
-            Part.Stream = new MemoryStream(FirstSector);
+            FlashPart Part = new()
+            {
+                StartSector = (uint)EFIESP.FirstSector,
+                Stream = new MemoryStream(FirstSector)
+            };
             Parts.Add(Part);
 
             return Parts;
@@ -2634,7 +2797,7 @@ namespace WPinternals
 
         private static async Task LumiaFlashParts(PhoneNotifierViewModel Notifier, string FFUPath, bool PerformFullFlashFirst, bool SkipWrite, List<FlashPart> Parts, bool DoResetFirst = true, bool ClearFlashingStatusAtEnd = true, bool CheckSectorAlignment = true, bool ShowProgress = true, bool Experimental = false, SetWorkingStatus SetWorkingStatus = null, UpdateWorkingStatus UpdateWorkingStatus = null, ExitSuccess ExitSuccess = null, ExitFailure ExitFailure = null, string EDEPath = null)
         {
-            PhoneInfo Info = ((NokiaFlashModel)Notifier.CurrentModel).ReadPhoneInfo();
+            LumiaFlashAppPhoneInfo Info = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadPhoneInfo();
             bool IsSpecA = Info.FlashAppProtocolVersionMajor < 2;
 
             if (IsSpecA)
@@ -2651,56 +2814,59 @@ namespace WPinternals
         {
             SetWorkingStatus("Initializing flash...", null, 100, Status: WPinternalsStatus.Initializing);
 
-            NokiaFlashModel FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
+            LumiaFlashAppModel FlashModel = (LumiaFlashAppModel)Notifier.CurrentModel;
 
             UInt64 InputStreamLength = 0;
             UInt64 totalwritten = 0;
             int ProgressPercentage = 0;
 
-            foreach (FlashPart Part in FlashParts)
+            if (FlashParts != null)
             {
-                InputStreamLength += (ulong)Part.Stream.Length;
-            }
-
-            foreach (FlashPart Part in FlashParts)
-            {
-                Stream InputStream = new DecompressedStream(Part.Stream);
-
-                if (InputStream != null)
+                foreach (FlashPart Part in FlashParts)
                 {
-                    using (InputStream)
+                    InputStreamLength += (ulong)Part.Stream.Length;
+                }
+
+                foreach (FlashPart Part in FlashParts)
+                {
+                    Stream InputStream = new DecompressedStream(Part.Stream);
+
+                    if (InputStream != null)
                     {
-                        const int FlashBufferSize = 0x200000; // Flash 8 GB phone -> buffersize 0x200000 = 11:45 min, buffersize 0x20000 = 12:30 min
-                        byte[] FlashBuffer = new byte[FlashBufferSize];
-                        int BytesRead;
-                        UInt64 i = 0;
-                        do
+                        using (InputStream)
                         {
-                            BytesRead = InputStream.Read(FlashBuffer, 0, FlashBufferSize);
-
-                            byte[] FlashBufferFinalSize;
-                            if (BytesRead > 0)
+                            const int FlashBufferSize = 0x200000; // Flash 8 GB phone -> buffersize 0x200000 = 11:45 min, buffersize 0x20000 = 12:30 min
+                            byte[] FlashBuffer = new byte[FlashBufferSize];
+                            int BytesRead;
+                            UInt64 i = 0;
+                            do
                             {
-                                if (BytesRead == FlashBufferSize)
+                                BytesRead = InputStream.Read(FlashBuffer, 0, FlashBufferSize);
+
+                                byte[] FlashBufferFinalSize;
+                                if (BytesRead > 0)
                                 {
-                                    FlashBufferFinalSize = FlashBuffer;
-                                }
-                                else
-                                {
-                                    FlashBufferFinalSize = new byte[BytesRead];
-                                    Buffer.BlockCopy(FlashBuffer, 0, FlashBufferFinalSize, 0, BytesRead);
+                                    if (BytesRead == FlashBufferSize)
+                                    {
+                                        FlashBufferFinalSize = FlashBuffer;
+                                    }
+                                    else
+                                    {
+                                        FlashBufferFinalSize = new byte[BytesRead];
+                                        Buffer.BlockCopy(FlashBuffer, 0, FlashBufferFinalSize, 0, BytesRead);
+                                    }
+
+                                    FlashModel.FlashSectors((UInt32)(Part.StartSector + (i / 0x200)), FlashBufferFinalSize, ProgressPercentage);
                                 }
 
-                                FlashModel.FlashSectors((UInt32)(Part.StartSector + (i / 0x200)), FlashBufferFinalSize, ProgressPercentage);
+                                UpdateWorkingStatus(Part.ProgressText, null, (uint)ProgressPercentage, WPinternalsStatus.Flashing);
+                                totalwritten += (UInt64)FlashBuffer.Length / 0x200;
+                                ProgressPercentage = (int)((double)totalwritten / (InputStreamLength / 0x200) * 100);
+
+                                i += FlashBufferSize;
                             }
-
-                            UpdateWorkingStatus(Part.ProgressText, null, (uint)ProgressPercentage, WPinternalsStatus.Flashing);
-                            totalwritten += (UInt64)FlashBuffer.Length / 0x200;
-                            ProgressPercentage = (int)((double)totalwritten / (InputStreamLength / 0x200) * 100);
-
-                            i += FlashBufferSize;
+                            while (BytesRead == FlashBufferSize);
                         }
-                        while (BytesRead == FlashBufferSize);
                     }
                 }
             }

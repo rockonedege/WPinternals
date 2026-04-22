@@ -21,6 +21,7 @@
 using MadWizard.WinUSBNet;
 using System;
 using System.IO.Ports;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -38,7 +39,7 @@ namespace WPinternals
         {
             CRC16 = new CRC16(0x1189, 0xFFFF, 0xFFFF);
 
-            string[] DevicePathElements = DevicePath.Split(new char[] { '#' });
+            string[] DevicePathElements = DevicePath.Split(['#']);
             if (string.Equals(DevicePathElements[3], "{86E0D1E0-8089-11D0-9CE4-08003E301F73}", StringComparison.CurrentCultureIgnoreCase))
             {
                 string PortName = (string)Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\USB\" + DevicePathElements[1] + @"\" + DevicePathElements[2] + @"\Device Parameters", "PortName", null);
@@ -58,7 +59,10 @@ namespace WPinternals
                 {
                     this.USBDevice = new USBDevice(DevicePath);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LogFile.LogException(ex, LogType.FileOnly);
+                }
             }
         }
 
@@ -84,10 +88,10 @@ namespace WPinternals
             return GetResponse(ResponsePattern);
         }
 
-        internal byte[] GetResponse(byte[] ResponsePattern)
+        internal byte[] GetResponse(byte[] ResponsePattern, int Length = 0x2000)
         {
-            byte[] ResponseBuffer = new byte[0x2000];
-            int Length = 0;
+            byte[] ResponseBuffer = new byte[Length];
+            Length = 0;
             bool IsIncomplete = false;
 
             do
@@ -146,7 +150,10 @@ namespace WPinternals
                 {
                     IsIncomplete = true;
                 }
-                catch { } // Will be rethrown as BadConnectionException
+                catch (Exception ex) // Will be rethrown as BadConnectionException
+                {
+                    LogFile.LogException(ex, LogType.FileOnly);
+                }
             }
             while (IsIncomplete);
 
@@ -323,7 +330,7 @@ namespace WPinternals
     public class CRC16
     {
         private readonly UInt16[] ChecksumTable =
-            new UInt16[] {
+            [
                 0x0000, 0x1189, 0x2312, 0x329b, 0x4624, 0x57ad, 0x6536, 0x74bf,
                 0x8c48, 0x9dc1, 0xaf5a, 0xbed3, 0xca6c, 0xdbe5, 0xe97e, 0xf8f7,
                 0x1081, 0x0108, 0x3393, 0x221a, 0x56a5, 0x472c, 0x75b7, 0x643e,
@@ -356,7 +363,7 @@ namespace WPinternals
                 0x6b46, 0x7acf, 0x4854, 0x59dd, 0x2d62, 0x3ceb, 0x0e70, 0x1ff9,
                 0xf78f, 0xe606, 0xd49d, 0xc514, 0xb1ab, 0xa022, 0x92b9, 0x8330,
                 0x7bc7, 0x6a4e, 0x58d5, 0x495c, 0x3de3, 0x2c6a, 0x1ef1, 0x0f78
-            };
+            ];
 
         private readonly UInt16 Seed, FinalXor;
 

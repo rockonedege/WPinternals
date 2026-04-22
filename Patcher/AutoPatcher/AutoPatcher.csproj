@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Patcher</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Platforms>x86</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Patcher\ArmCompiler.cs">
+      <Link>ArmCompiler.cs</Link>
+    </Compile>
+    <Compile Include="..\Patcher\ByteOperations.cs">
+      <Link>ByteOperations.cs</Link>
+    </Compile>
+    <Compile Include="..\Patcher\HelperClasses.cs">
+      <Link>HelperClasses.cs</Link>
+    </Compile>
+    <Compile Include="..\Patcher\ObjectFileParser.cs">
+      <Link>ObjectFileParser.cs</Link>
+    </Compile>
+    <Compile Include="..\Patcher\PatchEngine.cs">
+      <Link>PatchEngine.cs</Link>
+    </Compile>
+    <Compile Include="..\Patcher\PeFile.cs">
+      <Link>PeFile.cs</Link>
+    </Compile>
+    <None Include="..\Patcher\LICENSE">
+      <Link>LICENSE</Link>
+    </None>
+    <None Update="BootUnllockAndRootAccessPatchScript.pds">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Gee.External.Capstone" Version="2.0.2" />
+  </ItemGroup>
+</Project>

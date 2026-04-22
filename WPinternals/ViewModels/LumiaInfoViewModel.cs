@@ -19,6 +19,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
+using UnifiedFlashingPlatform;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia.NCSd;
+using WPinternals.Models.SimpleIO;
+using WPinternals.Models.UEFIApps.BootMgr;
+using WPinternals.Models.UEFIApps.Flash;
+using WPinternals.Models.UEFIApps.PhoneInfo;
 
 namespace WPinternals
 {
@@ -66,21 +73,31 @@ namespace WPinternals
             switch (CurrentInterface)
             {
                 case null:
-                case PhoneInterfaces.Lumia_Bootloader:
                     ActivateSubContext(null);
-                    //ActivateSubContext(new NokiaBootloaderViewModel((NokiaFlashModel)CurrentModel, ModeSwitchRequestCallback, SwitchToGettingStarted));
+                    break;
+                case PhoneInterfaces.Lumia_Bootloader:
+                    ActivateSubContext(new NokiaBootloaderViewModel((LumiaBootManagerAppModel)CurrentModel, ModeSwitchRequestCallback, SwitchToGettingStarted));
+                    break;
+                case PhoneInterfaces.Lumia_PhoneInfo:
+                    ActivateSubContext(new NokiaPhoneInfoViewModel((LumiaPhoneInfoAppModel)CurrentModel, ModeSwitchRequestCallback, SwitchToGettingStarted));
                     break;
                 case PhoneInterfaces.Lumia_Normal:
-                    ActivateSubContext(new NokiaNormalViewModel((NokiaPhoneModel)CurrentModel, ModeSwitchRequestCallback));
+                    ActivateSubContext(new NokiaNormalViewModel((NokiaCareSuiteModel)CurrentModel, ModeSwitchRequestCallback));
                     break;
                 case PhoneInterfaces.Lumia_Flash:
-                    ActivateSubContext(new NokiaFlashViewModel((NokiaFlashModel)CurrentModel, ModeSwitchRequestCallback, SwitchToGettingStarted));
+                    ActivateSubContext(new NokiaFlashViewModel((LumiaFlashAppModel)CurrentModel, ModeSwitchRequestCallback, SwitchToGettingStarted));
                     break;
                 case PhoneInterfaces.Lumia_Label:
-                    ActivateSubContext(new NokiaLabelViewModel((NokiaPhoneModel)CurrentModel, ModeSwitchRequestCallback));
+                    ActivateSubContext(new NokiaLabelViewModel((NokiaCareSuiteModel)CurrentModel, ModeSwitchRequestCallback));
                     break;
                 case PhoneInterfaces.Lumia_MassStorage:
                     ActivateSubContext(new NokiaMassStorageViewModel((MassStorage)CurrentModel));
+                    break;
+                case PhoneInterfaces.SimpleIO:
+                    ActivateSubContext(new SimpleIOViewModel((SimpleIOModel)CurrentModel, ModeSwitchRequestCallback));
+                    break;
+                case PhoneInterfaces.UFP:
+                    ActivateSubContext(new UFPViewModel((UnifiedFlashingPlatformModel)CurrentModel, ModeSwitchRequestCallback));
                     break;
             }
         }

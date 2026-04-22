@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net6.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <PublishUrl>publish\</PublishUrl>
@@ -22,6 +22,7 @@
     <UseWPF>true</UseWPF>
     <Deterministic>false</Deterministic>
     <Platforms>AnyCPU;x86;x64;arm64</Platforms>
+    <DefineConstants>TRACE;PREVIEW</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -29,12 +30,10 @@
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <SignAssembly>true</SignAssembly>
-    <AssemblyOriginatorKeyFile>Heathcliff74.snk</AssemblyOriginatorKeyFile>
     <NoWarn>1701;1702;CA1416;RCS1090;RCS1163</NoWarn>
   </PropertyGroup>
   <PropertyGroup>
-    <ApplicationIcon>WPinternals.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\WPinternals.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup>
     <StartupObject>WPinternals.App</StartupObject>
@@ -302,53 +301,32 @@
     <PlatformTarget>x64</PlatformTarget>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
-  <PropertyGroup>
-    <AssemblyOriginatorKeyFile>Heathcliff74.snk</AssemblyOriginatorKeyFile>
-  </PropertyGroup>
   <ItemGroup>
     <None Update="app.manifest">
       <SubType>Designer</SubType>
     </None>
-    <None Include="Heathcliff74.snk" />
     <AppDesigner Include="Properties\" />
-    <EmbeddedResource Include="SB" />
-    <EmbeddedResource Include="SBA" />
-    <EmbeddedResource Include="SBMSM" />
+    <EmbeddedResource Include="Assets\SB" />
+    <EmbeddedResource Include="Assets\SBA" />
+    <EmbeddedResource Include="Assets\SBMSM" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="Logo.png" />
+    <Resource Include="Assets\Logo.png" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="WPinternals.ico" />
+    <Resource Include="Assets\WPinternals.ico" />
   </ItemGroup>
   <ItemGroup>
-    <BootstrapperPackage Include=".NETFramework,Version=v4.5">
-      <Visible>False</Visible>
-      <ProductName>Microsoft .NET Framework 4.5 %28x86 and x64%29</ProductName>
-      <Install>true</Install>
-    </BootstrapperPackage>
-    <BootstrapperPackage Include="Microsoft.Net.Client.3.5">
-      <Visible>False</Visible>
-      <ProductName>.NET Framework 3.5 SP1 Client Profile</ProductName>
-      <Install>false</Install>
-    </BootstrapperPackage>
-    <BootstrapperPackage Include="Microsoft.Net.Framework.3.5.SP1">
-      <Visible>False</Visible>
-      <ProductName>.NET Framework 3.5 SP1</ProductName>
-      <Install>false</Install>
-    </BootstrapperPackage>
+    <Resource Include="Assets\aerobusy.gif" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="aerobusy.gif" />
+    <Resource Include="Assets\PhoneReboot.png" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="PhoneReboot.png" />
+    <Resource Include="Assets\Logo-Small.png" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="Logo-Small.png" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="PatchDefinitions.xml">
+    <EmbeddedResource Include="Assets\PatchDefinitions.xml">
       <SubType>Designer</SubType>
     </EmbeddedResource>
   </ItemGroup>
@@ -357,15 +335,17 @@
     <PackageReference Include="DiscUtils.Ntfs" Version="0.16.13" />
     <PackageReference Include="DiscUtils.Streams" Version="0.16.13" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-    <PackageReference Include="System.Data.DataSetExtensions" Version="4.6.0-preview3.19128.7" />
-    <PackageReference Include="System.IO.Compression" Version="4.3.0" />
-    <PackageReference Include="System.IO.Ports" Version="6.0.0" />
-    <PackageReference Include="System.Management" Version="6.0.0" />
-    <PackageReference Include="System.Text.Json" Version="6.0.0" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="DiscUtils\DiscUtils.Core\CoreCompat\" />
-    <Folder Include="DiscUtils\DiscUtils.Core\Internal\" />
+    <ProjectReference Include="..\7zip\7zip.csproj" />
+    <ProjectReference Include="..\DiscUtils\DiscUtils.Fat\DiscUtils.Fat.WPI.csproj" />
+    <ProjectReference Include="..\WinUSBNet\WinUSBNet.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Models\UFP\" />
   </ItemGroup>
   <PropertyGroup>
     <PreBuildEvent>

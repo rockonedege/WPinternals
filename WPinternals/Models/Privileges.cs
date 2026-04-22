@@ -22,6 +22,7 @@ using System;
 using System.Collections.Specialized;
 using System.Runtime.InteropServices;
 using System.Threading;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -35,8 +36,8 @@ namespace WPinternals
     {
         #region Private static members
         private static readonly LocalDataStoreSlot tlsSlot = Thread.AllocateDataSlot();
-        private static readonly HybridDictionary privileges = new();
-        private static readonly HybridDictionary luids = new();
+        private static readonly HybridDictionary privileges = [];
+        private static readonly HybridDictionary luids = [];
         private static readonly ReaderWriterLock privilegeLock = new();
         #endregion
 
@@ -415,8 +416,10 @@ namespace WPinternals
                         (this.tlsContents.ReferenceCountValue > 1 ||
                         !this.tlsContents.IsImpersonating))
                     {
-                        NativeMethods.TOKEN_PRIVILEGE newState = new();
-                        newState.PrivilegeCount = 1;
+                        NativeMethods.TOKEN_PRIVILEGE newState = new()
+                        {
+                            PrivilegeCount = 1
+                        };
                         newState.Privilege.Luid = this.luid;
                         newState.Privilege.Attributes = this.initialState ? NativeMethods.SE_PRIVILEGE_ENABLED : NativeMethods.SE_PRIVILEGE_DISABLED;
 
@@ -486,8 +489,13 @@ namespace WPinternals
 
                 callback(state);
             }
-            catch
+            catch (Exception ex)
             {
+                LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                LogFile.Log(ex.Message, LogType.FileAndConsole);
+                LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                 p.Revert();
                 throw;
             }
@@ -544,8 +552,10 @@ namespace WPinternals
                         this.tlsContents.IncrementReferenceCount();
                     }
 
-                    NativeMethods.TOKEN_PRIVILEGE newState = new();
-                    newState.PrivilegeCount = 1;
+                    NativeMethods.TOKEN_PRIVILEGE newState = new()
+                    {
+                        PrivilegeCount = 1
+                    };
                     newState.Privilege.Luid = this.luid;
                     newState.Privilege.Attributes = enable ? NativeMethods.SE_PRIVILEGE_ENABLED : NativeMethods.SE_PRIVILEGE_DISABLED;
 

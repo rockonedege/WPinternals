@@ -21,6 +21,7 @@
 using System;
 using System.ComponentModel;
 using System.Threading;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -28,7 +29,12 @@ namespace WPinternals
     {
         protected SynchronizationContext UIContext;
 
-        public bool IsSwitchingInterface = false;
+        private bool _IsSwitchingInterface = false;
+        public bool IsSwitchingInterface
+        {
+            get => _IsSwitchingInterface;
+            set => _IsSwitchingInterface = value;
+        }
         public bool IsFlashModeOperation = false;
 
         public event PropertyChangedEventHandler PropertyChanged = delegate { };

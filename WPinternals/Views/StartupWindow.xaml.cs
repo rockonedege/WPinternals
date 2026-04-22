@@ -20,8 +20,8 @@
 
 using Microsoft.Win32;
 using System;
-using System.Linq;
 using System.Windows;
+using WPinternals.Config;
 
 namespace WPinternals
 {

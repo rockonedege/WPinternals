@@ -22,6 +22,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -29,7 +30,7 @@ namespace WPinternals
     {
         internal static List<QualcommPartition> GetPossibleLoadersForRootKeyHash(string Path, byte[] RootKeyHash)
         {
-            List<QualcommPartition> Result = new();
+            List<QualcommPartition> Result = [];
 
             try
             {
@@ -52,7 +53,7 @@ namespace WPinternals
                             // Make sure the RootKeyHash is not blank
                             // If the RootKeyHash is blank, this is an engineering device, and it will accept any RKH
                             // We expect the user to know what he is doing in such case and we will ignore checks
-                            if (!StructuralComparisons.StructuralEqualityComparer.Equals(RootKeyHash, new byte[RootKeyHash.Length]))
+                            if (RootKeyHash != null && !StructuralComparisons.StructuralEqualityComparer.Equals(RootKeyHash, new byte[RootKeyHash.Length]))
                             {
                                 if (StructuralComparisons.StructuralEqualityComparer.Equals(Loader.RootKeyHash, RootKeyHash)
                                     && (ByteOperations.FindUnicode(Loader.Binary, "QHSUSB_ARMPRG") != null)) // To detect that this is a loader, and not SBL1 or something. V1 loaders are QHSUSB_ARMPRG. V2 loaders are QHSUSB__BULK. Only V1 supported for now, because V2 only accepts signed payload.
@@ -69,10 +70,16 @@ namespace WPinternals
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
 
             return Result;
         }
@@ -89,6 +96,11 @@ namespace WPinternals
 
                 foreach (string Line in Lines)
                 {
+                    if (string.IsNullOrEmpty(Line))
+                    {
+                        continue;
+                    }
+
                     if (Line[0] != ':')
                     {
                         throw new BadImageFormatException();
@@ -116,7 +128,10 @@ namespace WPinternals
                 Result = new byte[BufferSize];
                 System.Buffer.BlockCopy(Buffer, 0, Result, 0, BufferSize);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
 
             return Result;
         }

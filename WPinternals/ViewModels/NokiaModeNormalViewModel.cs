@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
+using WPinternals.Models.Lumia;
 
 namespace WPinternals
 {
@@ -40,6 +41,12 @@ namespace WPinternals
             {
                 case "Flash":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Flash);
+                    break;
+                case "PhoneInfo":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_PhoneInfo);
+                    break;
+                case "BootMgr":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_Bootloader);
                     break;
                 case "Label":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Label);

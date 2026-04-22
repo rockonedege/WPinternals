@@ -20,6 +20,8 @@
 
 using System;
 using System.Windows;
+using WPinternals.Config;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -66,8 +68,13 @@ namespace WPinternals
 
                             Completed();
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                            LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                            LogFile.Log(ex.Message, LogType.FileAndConsole);
+                            LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                             Failed();
                         }
                     });

@@ -23,6 +23,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using WPinternals.HelperClasses;
+using WPinternals.Models.UEFIApps.Flash;
 
 namespace WPinternals
 {
@@ -50,8 +52,7 @@ namespace WPinternals
             byte[] RootKeyHash = null;
             if (PhoneNotifier.CurrentInterface == PhoneInterfaces.Qualcomm_Download)
             {
-                QualcommDownload Download2 = new((QualcommSerial)PhoneNotifier.CurrentModel);
-                RootKeyHash = Download2.GetRKH();
+                RootKeyHash = new QualcommDownload((QualcommSerial)PhoneNotifier.CurrentModel).GetRKH();
             }
 
             List<QualcommPartition> PossibleLoaders = null;
@@ -74,6 +75,7 @@ namespace WPinternals
 
             QualcommSerial Serial = (QualcommSerial)PhoneNotifier.CurrentModel;
             QualcommDownload Download = new(Serial);
+
             if (Download.IsAlive())
             {
                 int Attempt = 1;
@@ -181,9 +183,9 @@ namespace WPinternals
             await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_MassStorage);
             MassStorage MassStorage = (MassStorage)Notifier.CurrentModel;
 
-            foreach (var part in Directory.EnumerateFiles(PartPath))
+            foreach (string part in Directory.EnumerateFiles(PartPath))
             {
-                var partname = part.Split('\\').Last().Replace(".img", "");
+                string partname = part.Split('\\').Last().Replace(".img", "");
                 try
                 {
                     LogFile.Log($"Writing {partname} to the device.", LogType.ConsoleOnly);
@@ -193,8 +195,13 @@ namespace WPinternals
                     MassStorage.RestorePartition(part, partname, (v, t) => LogFile.Log("Progress: " + v + "%", LogType.ConsoleOnly));
                     LogFile.Log("", LogType.ConsoleOnly);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                    LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                    LogFile.Log(ex.Message, LogType.FileAndConsole);
+                    LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                     LogFile.Log("", LogType.ConsoleOnly);
                     LogFile.Log($"Failed writing {partname} to the device.", LogType.ConsoleOnly);
                 }
@@ -203,7 +210,7 @@ namespace WPinternals
 
         internal static void PatchImg(string dump)
         {
-            using var fil = File.Open(dump, FileMode.Open);
+            using FileStream fil = File.Open(dump, FileMode.Open);
             byte[] gptbuffer = new byte[0x4200];
 
             fil.Seek(0x200, SeekOrigin.Begin);
@@ -258,7 +265,7 @@ namespace WPinternals
                 {
                     LogFile.Log("Phone needs to be switched to emergency mode.", LogType.FileAndConsole);
                     await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                    PhoneInfo Info = ((NokiaFlashModel)Notifier.CurrentModel).ReadPhoneInfo();
+                    LumiaFlashAppPhoneInfo Info = ((LumiaFlashAppModel)Notifier.CurrentModel).ReadPhoneInfo();
                     Info.Log(LogType.ConsoleOnly);
                     await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Qualcomm_Download);
                     if (Notifier.CurrentInterface != PhoneInterfaces.Qualcomm_Download)
@@ -272,8 +279,9 @@ namespace WPinternals
                 // Send and start programmer
                 QualcommSerial Serial = (QualcommSerial)Notifier.CurrentModel;
                 QualcommSahara Sahara = new(Serial);
+                QualcommFirehose Firehose = new(Serial);
 
-                if (await Sahara.Reset(ProgrammerPath))
+                if (await Sahara.LoadProgrammer(ProgrammerPath) && await Firehose.Reset())
                 {
                     LogFile.Log("Emergency programmer test succeeded", LogType.FileAndConsole);
                 }

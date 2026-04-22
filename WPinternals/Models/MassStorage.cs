@@ -23,11 +23,14 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia;
 
 namespace WPinternals
 {
-    internal class MassStorage : NokiaPhoneModel
+    internal class MassStorage : IDisposable
     {
+        protected bool Disposed = false;
         internal string Drive = null;
         internal string PhysicalDrive = null;
         internal string VolumeLabel = null;
@@ -37,18 +40,18 @@ namespace WPinternals
 
         private string Serial;
 
-        internal MassStorage(string DevicePath) : base(DevicePath)
+        internal MassStorage(string DevicePath)
         {
             try
             {
-                foreach (ManagementObject logical in new ManagementObjectSearcher("select * from Win32_LogicalDisk").Get())
+                foreach (ManagementObject logical in new ManagementObjectSearcher("select * from Win32_LogicalDisk").Get().Cast<ManagementObject>())
                 {
                     System.Diagnostics.Debug.Print(logical["Name"].ToString());
 
                     string Label = "";
-                    foreach (ManagementObject partition in logical.GetRelated("Win32_DiskPartition"))
+                    foreach (ManagementObject partition in logical.GetRelated("Win32_DiskPartition").Cast<ManagementObject>())
                     {
-                        foreach (ManagementObject drive in partition.GetRelated("Win32_DiskDrive"))
+                        foreach (ManagementObject drive in partition.GetRelated("Win32_DiskDrive").Cast<ManagementObject>())
                         {
                             if (drive["PNPDeviceID"].ToString().Contains("VEN_QUALCOMM&PROD_MMC_STORAGE", StringComparison.CurrentCulture) ||
                                 drive["PNPDeviceID"].ToString().Contains("VEN_MSFT&PROD_PHONE_MMC_STOR", StringComparison.CurrentCulture))
@@ -73,7 +76,10 @@ namespace WPinternals
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
         }
 
         internal void AttachQualcommSerial(string DevicePath)
@@ -106,23 +112,47 @@ namespace WPinternals
 
             try
             {
-                QualcommSerial SerialDevice = new(Serial);
-
-                SerialDevice.EncodeCommands = false;
+                QualcommSerial SerialDevice = new(Serial)
+                {
+                    EncodeCommands = false
+                };
 
                 // This will succeed on new models
-                SerialDevice.SendData(new byte[] { 0x7, 0x0, 0x0, 0x0, 0x8, 0x0, 0x0, 0x0 });
+                SerialDevice.SendData([0x7, 0x0, 0x0, 0x0, 0x8, 0x0, 0x0, 0x0]);
 
                 // This will succeed on old models
-                SerialDevice.SendData(new byte[] { 0x7E, 0xA, 0x0, 0x0, 0xB6, 0xB5, 0x7E });
+                SerialDevice.SendData([0x7E, 0xA, 0x0, 0x0, 0xB6, 0xB5, 0x7E]);
 
                 SerialDevice.Close();
                 SerialDevice.Dispose();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
         }
 
-        protected override void Dispose(bool disposing)
+        /// <summary>
+        /// Disposes the UsbDevice including all unmanaged WinUSB handles. This function
+        /// should be called when the UsbDevice object is no longer in use, otherwise
+        /// unmanaged handles will remain open until the garbage collector finalizes the
+        /// object.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Finalizer for the UsbDevice. Disposes all unmanaged handles.
+        /// </summary>
+        ~MassStorage()
+        {
+            Dispose(false);
+        }
+
+        protected void Dispose(bool disposing)
         {
             if (Disposed)
             {
@@ -132,8 +162,6 @@ namespace WPinternals
             if (disposing)
             {
                 CloseVolume();
-
-                base.Dispose(disposing);
             }
         }
 

@@ -28,26 +28,27 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Xml;
 using System.Xml.Serialization;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
     internal class PatchEngine
     {
-        internal List<PatchDefinition> PatchDefinitions = new();
-        internal readonly List<TargetRedirection> TargetRedirections = new();
+        internal List<PatchDefinition> PatchDefinitions = [];
+        internal readonly List<TargetRedirection> TargetRedirections = [];
 
         internal PatchEngine() { }
 
         internal PatchEngine(string PatchDefinitionsXmlString)
         {
-            XmlSerializer x = new(PatchDefinitions.GetType(), null, Array.Empty<Type>(), new XmlRootAttribute("PatchDefinitions"), "");
+            XmlSerializer x = new(PatchDefinitions.GetType(), null, [], new XmlRootAttribute("PatchDefinitions"), "");
             MemoryStream s = new(System.Text.Encoding.ASCII.GetBytes(PatchDefinitionsXmlString));
             PatchDefinitions = (List<PatchDefinition>)x.Deserialize(s);
         }
 
         internal void WriteDefinitions(string FilePath)
         {
-            XmlSerializer x = new(PatchDefinitions.GetType(), null, Array.Empty<Type>(), new XmlRootAttribute("PatchDefinitions"), "");
+            XmlSerializer x = new(PatchDefinitions.GetType(), null, [], new XmlRootAttribute("PatchDefinitions"), "");
 
             XmlSerializerNamespaces ns = new();
             ns.Add("", "");
@@ -94,7 +95,7 @@ namespace WPinternals
             }
             set
             {
-                _TargetPath = value.TrimEnd(new char[] { '\\' });
+                _TargetPath = value.TrimEnd(['\\']);
             }
         }
 
@@ -115,7 +116,7 @@ namespace WPinternals
         internal bool Patch(string PatchDefinition)
         {
             bool Result = false;
-            List<FilePatcher> LoadedFiles = new();
+            List<FilePatcher> LoadedFiles = [];
 
             LogFile.Log("Attempt patch: " + PatchDefinition);
 
@@ -237,7 +238,7 @@ namespace WPinternals
 
         internal void Restore(string PatchDefinition)
         {
-            List<FilePatcher> LoadedFiles = new();
+            List<FilePatcher> LoadedFiles = [];
 
             try
             {
@@ -365,7 +366,7 @@ namespace WPinternals
             }
             set
             {
-                _RelativePath = value.TrimStart(new char[] { '\\' }).TrimEnd(new char[] { '\\' });
+                _RelativePath = value.TrimStart(['\\']).TrimEnd(['\\']);
             }
         }
 
@@ -377,7 +378,7 @@ namespace WPinternals
             }
             set
             {
-                _TargetPath = value.TrimEnd(new char[] { '\\' });
+                _TargetPath = value.TrimEnd(['\\']);
             }
         }
     }
@@ -492,7 +493,7 @@ namespace WPinternals
         [XmlAttribute]
         public string Name;
 
-        public List<TargetVersion> TargetVersions = new();
+        public List<TargetVersion> TargetVersions = [];
     }
 
     public class TargetVersion // Must be public to be serializable
@@ -500,7 +501,7 @@ namespace WPinternals
         [XmlAttribute]
         public string Description;
 
-        public List<TargetFile> TargetFiles = new();
+        public List<TargetFile> TargetFiles = [];
     }
 
     public class TargetFile // Must be public to be serializable
@@ -515,7 +516,7 @@ namespace WPinternals
             }
             set
             {
-                _Path = value.TrimStart(new char[] { '\\' });
+                _Path = value.TrimStart(['\\']);
             }
         }
 
@@ -549,8 +550,8 @@ namespace WPinternals
             }
         }
 
-        public List<Patch> Patches = new();
-        public List<TargetFile> Obsolete = new();
+        public List<Patch> Patches = [];
+        public List<TargetFile> Obsolete = [];
     }
 
     public class Patch // Must be public to be serializable

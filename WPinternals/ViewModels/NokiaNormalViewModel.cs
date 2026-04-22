@@ -20,6 +20,8 @@
 
 using System;
 using System.Threading;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia.NCSd;
 
 namespace WPinternals
 {
@@ -30,10 +32,10 @@ namespace WPinternals
 
     internal class NokiaNormalViewModel : ContextViewModel
     {
-        private readonly NokiaPhoneModel CurrentModel;
+        private readonly NokiaCareSuiteModel CurrentModel;
         private readonly Action<PhoneInterfaces> RequestModeSwitch;
 
-        internal NokiaNormalViewModel(NokiaPhoneModel CurrentModel, Action<PhoneInterfaces> RequestModeSwitch)
+        internal NokiaNormalViewModel(NokiaCareSuiteModel CurrentModel, Action<PhoneInterfaces> RequestModeSwitch)
             : base()
         {
             this.CurrentModel = CurrentModel;
@@ -67,17 +69,35 @@ namespace WPinternals
 
                 LogFile.Log("IMEI: " + IMEI);
                 PublicID = CurrentModel.ExecuteJsonMethodAsBytes("ReadPublicId", "PublicId"); // 0x14 bytes: a5 e5 ...
-                LogFile.Log("Public ID: " + Converter.ConvertHexToString(PublicID, " "));
+                if (PublicID != null)
+                {
+                    LogFile.Log("Public ID: " + Converter.ConvertHexToString(PublicID, " "));
+                }
                 BluetoothMac = CurrentModel.ExecuteJsonMethodAsBytes("ReadBtId", "BtId"); // 6 bytes: bc c6 ...
-                LogFile.Log("Bluetooth MAC: " + Converter.ConvertHexToString(BluetoothMac, " "));
+                if (BluetoothMac != null)
+                {
+                    LogFile.Log("Bluetooth MAC: " + Converter.ConvertHexToString(BluetoothMac, " "));
+                }
                 WlanMac1 = CurrentModel.ExecuteJsonMethodAsBytes("ReadWlanMacAddress", "WlanMacAddress1"); // 6 bytes
-                LogFile.Log("WLAN MAC 1: " + Converter.ConvertHexToString(WlanMac1, " "));
+                if (WlanMac1 != null)
+                {
+                    LogFile.Log("WLAN MAC 1: " + Converter.ConvertHexToString(WlanMac1, " "));
+                }
                 WlanMac2 = CurrentModel.ExecuteJsonMethodAsBytes("ReadWlanMacAddress", "WlanMacAddress2"); // 6 bytes
-                LogFile.Log("WLAN MAC 2: " + Converter.ConvertHexToString(WlanMac2, " "));
+                if (WlanMac2 != null)
+                {
+                    LogFile.Log("WLAN MAC 2: " + Converter.ConvertHexToString(WlanMac2, " "));
+                }
                 WlanMac3 = CurrentModel.ExecuteJsonMethodAsBytes("ReadWlanMacAddress", "WlanMacAddress3"); // 6 bytes
-                LogFile.Log("WLAN MAC 3: " + Converter.ConvertHexToString(WlanMac3, " "));
+                if (WlanMac3 != null)
+                {
+                    LogFile.Log("WLAN MAC 3: " + Converter.ConvertHexToString(WlanMac3, " "));
+                }
                 WlanMac4 = CurrentModel.ExecuteJsonMethodAsBytes("ReadWlanMacAddress", "WlanMacAddress4"); // 6 bytes
-                LogFile.Log("WLAN MAC 4: " + Converter.ConvertHexToString(WlanMac4, " "));
+                if (WlanMac4 != null)
+                {
+                    LogFile.Log("WLAN MAC 4: " + Converter.ConvertHexToString(WlanMac4, " "));
+                }
 
                 bool? ProductionDone = CurrentModel.ExecuteJsonMethodAsBoolean("ReadProductionDoneState", "ProductionDone");
                 IsBootloaderSecurityEnabled = ProductionDone == null
@@ -105,7 +125,10 @@ namespace WPinternals
                 this.Pk = Pk;
                 LogFile.Log("PK: " + Pk);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
         }
 
         private string _ProductCode = null;
@@ -380,6 +403,12 @@ namespace WPinternals
             {
                 case "Flash":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Flash);
+                    break;
+                case "PhoneInfo":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_PhoneInfo);
+                    break;
+                case "BootMgr":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_Bootloader);
                     break;
                 case "Label":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Label);

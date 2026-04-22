@@ -26,6 +26,11 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using WPinternals.Config;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia.NCSd;
+using WPinternals.Models.UEFIApps.BootMgr;
+using WPinternals.Models.UEFIApps.Flash;
 
 namespace WPinternals
 {
@@ -83,18 +88,16 @@ namespace WPinternals
         {
             FFU FFU = null;
             PhoneNotifierViewModel Notifier;
-            NokiaFlashModel FlashModel;
-            NokiaPhoneModel NormalModel;
-            PhoneInfo Info;
+            LumiaFlashAppModel FlashModel;
+            LumiaBootManagerAppModel BootMgrModel;
+            NokiaCareSuiteModel NormalModel;
+            LumiaFlashAppPhoneInfo FlashInfo;
+            LumiaBootManagerPhoneInfo BootManagerInfo;
             string ProductType;
-            string ProductCode;
-            string OperatorCode;
             string DownloadFolder;
             string FFUFilePath;
-            string URL;
             string[] URLs;
             Uri URI;
-            string FFUFileName;
             string EmergencyFileName;
             string EmergencyFilePath;
             string ProgrammerPath = "";
@@ -114,7 +117,7 @@ namespace WPinternals
                     return;
                 }
 
-                switch (args[1].ToLower().TrimStart(new char[] { '-', '/' }))
+                switch (args[1].ToLower().TrimStart(['-', '/']))
                 {
 #if DEBUG
                     case "test":
@@ -152,8 +155,12 @@ namespace WPinternals
                                 ? Convert.ToUInt64(args[2][2..], 16)
                                 : Convert.ToUInt64(args[2], 10);
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                            LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                            LogFile.Log(ex.Message, LogType.FileAndConsole);
+                            LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
                             LogFile.Log("Bad start sector", LogType.ConsoleOnly);
                             break;
                         }
@@ -181,22 +188,11 @@ namespace WPinternals
                         {
                             Notifier = new PhoneNotifierViewModel();
                             UIContext.Send(s => Notifier.Start(), null);
-
-                            FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Bootloader); // This also works for Bootloader Spec A
-
-                            GPT GPT = FlashModel.ReadGPT(); // May throw NotSupportedException
+                            await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Bootloader);
+                            GPT GPT = await LumiaUnlockBootloaderViewModel.ReadGPTFromFlashOrBootMgr(Notifier);
                             foreach (Partition Partition in GPT.Partitions)
                             {
                                 LogFile.Log(Partition.Name.PadRight(20) + "0x" + Partition.FirstSector.ToString("X8") + " - 0x" + Partition.LastSector.ToString("X8") + "    " + Partition.Volume, LogType.ConsoleOnly);
-                            }
-
-                            if (FlashModel.ReadPhoneInfo(false).FlashAppProtocolVersionMajor >= 2)
-                            {
-                                FlashModel.SwitchToFlashAppContext();
-                            }
-                            else
-                            {
-                                await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
                             }
 
                             Notifier.Stop();
@@ -221,11 +217,14 @@ namespace WPinternals
                         {
                             Notifier = new PhoneNotifierViewModel();
                             UIContext.Send(s => Notifier.Start(), null);
-                            FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                            GPT GPT = FlashModel.ReadGPT(); // May throw NotSupportedException
-                            Directory.CreateDirectory(Path.GetDirectoryName(args[2]));
+                            await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Bootloader);
+                            GPT GPT = await LumiaUnlockBootloaderViewModel.ReadGPTFromFlashOrBootMgr(Notifier);
+                            string DirPath = Path.GetDirectoryName(args[2]);
+                            if (!string.IsNullOrEmpty(DirPath) && !Directory.Exists(DirPath))
+                            {
+                                Directory.CreateDirectory(DirPath);
+                            }
                             GPT.WritePartitions(args[2]);
-                            FlashModel.SwitchToFlashAppContext();
                             Notifier.Stop();
                         }
                         catch (Exception Ex)
@@ -235,6 +234,35 @@ namespace WPinternals
                         finally
                         {
                             LogFile.EndAction("BackupGPT");
+                        }
+                        break;
+                    case "convertgpt":
+                        if (args.Length < 4)
+                        {
+                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -ConvertGPT <Path to GPT-file> <Path to xml-file>");
+                        }
+
+                        LogFile.BeginAction("ConvertGPT");
+                        try
+                        {
+                            using FileStream stream = File.OpenRead(args[2]);
+                            byte[] GPTBuffer = new byte[34 * 0x200];
+                            stream.Read(GPTBuffer, 0, 34 * 0x200);
+                            GPT GPT = new(GPTBuffer);// May throw NotSupportedException
+                            string DirPath = Path.GetDirectoryName(args[3]);
+                            if (!string.IsNullOrEmpty(DirPath) && !Directory.Exists(DirPath))
+                            {
+                                Directory.CreateDirectory(DirPath);
+                            }
+                            GPT.WritePartitions(args[3]);
+                        }
+                        catch (Exception Ex)
+                        {
+                            LogFile.LogException(Ex);
+                        }
+                        finally
+                        {
+                            LogFile.EndAction("ConvertGPT");
                         }
                         break;
                     case "restoregpt":
@@ -248,14 +276,12 @@ namespace WPinternals
                         {
                             Notifier = new PhoneNotifierViewModel();
                             UIContext.Send(s => Notifier.Start(), null);
-                            FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                            byte[] GptChunk = LumiaUnlockBootloaderViewModel.GetGptChunk(FlashModel, 0x20000);
+                            byte[] GptChunk = await LumiaUnlockBootloaderViewModel.GetGptChunkFromFlashOrBootMgr(Notifier, 0x20000);
                             GPT GPT = new(GptChunk);
                             string Xml = File.ReadAllText(args[2]);
                             GPT.MergePartitions(Xml, false);
                             GPT.Rebuild();
                             await LumiaV2UnlockBootViewModel.LumiaV2CustomFlash(Notifier, null, false, false, 0, GptChunk, true, true);
-                            FlashModel.SwitchToFlashAppContext();
                             Notifier.Stop();
                         }
                         catch (Exception Ex)
@@ -285,7 +311,10 @@ namespace WPinternals
                                 s = new FileStream(args[3], FileMode.Open, FileAccess.Read);
                                 Archive = new ZipArchive(s);
                             }
-                            catch { }
+                            catch (Exception ex)
+                            {
+                                LogFile.LogException(ex, LogType.FileOnly);
+                            }
 
                             if (Archive == null)
                             {
@@ -393,7 +422,11 @@ namespace WPinternals
                                 };
                             }
                             string EfiPath = Path.Combine(args[3], Name);
-                            Directory.CreateDirectory(Path.GetDirectoryName(EfiPath));
+                            string DirPath = Path.GetDirectoryName(EfiPath);
+                            if (!string.IsNullOrEmpty(DirPath) && !Directory.Exists(DirPath))
+                            {
+                                Directory.CreateDirectory(DirPath);
+                            }
                             File.WriteAllBytes(EfiPath, EfiBinary);
                         }
                         break;
@@ -512,9 +545,9 @@ namespace WPinternals
                         try
                         {
                             UIContext.Send(s => Notifier.Start(), null);
-                            FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                            Info = FlashModel.ReadPhoneInfo();
-                            Info.Log(LogType.ConsoleOnly);
+                            FlashModel = (LumiaFlashAppModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
+                            FlashInfo = FlashModel.ReadPhoneInfo();
+                            FlashInfo.Log(LogType.ConsoleOnly);
 
                             FFU ProfileFFU = null;
                             FFU CurrentFFU;
@@ -527,7 +560,7 @@ namespace WPinternals
                                     string PlatformID = CurrentFFU.PlatformID;
 
                                     // Check if the current FFU matches the connected phone, so that the FFU can be used for profiling.
-                                    if (Info.PlatformID.StartsWith(PlatformID, StringComparison.OrdinalIgnoreCase))
+                                    if (FlashInfo.PlatformID.StartsWith(PlatformID, StringComparison.OrdinalIgnoreCase))
                                     {
                                         ProfileFFU = CurrentFFU;
                                     }
@@ -536,7 +569,7 @@ namespace WPinternals
 
                             if (ProfileFFU == null)
                             {
-                                List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => Info.PlatformID.StartsWith(e.PlatformID, StringComparison.OrdinalIgnoreCase) && e.Exists()).ToList();
+                                List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => FlashInfo.PlatformID.StartsWith(e.PlatformID, StringComparison.OrdinalIgnoreCase) && e.Exists()).ToList();
                                 ProfileFFU = FFUs.Count > 0
                                     ? new FFU(FFUs[0].Path)
                                     : throw new WPinternalsException("Profile FFU missing", "No profile FFU has been found in the repository for your device. You can add a profile FFU within the download section of the tool or by using the command line.");
@@ -661,9 +694,9 @@ namespace WPinternals
                         LogFile.Log("Command: Show phone info", LogType.FileAndConsole);
                         Notifier = new PhoneNotifierViewModel();
                         UIContext.Send(s => Notifier.Start(), null);
-                        FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                        Info = FlashModel.ReadPhoneInfo();
-                        Info.Log(LogType.ConsoleOnly);
+                        FlashModel = (LumiaFlashAppModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
+                        FlashInfo = FlashModel.ReadPhoneInfo();
+                        FlashInfo.Log(LogType.ConsoleOnly);
                         Notifier.Stop();
                         break;
                     case "unlockbootloader":
@@ -673,9 +706,9 @@ namespace WPinternals
                             LogFile.Log("Command: Unlock Bootloader", LogType.FileAndConsole);
                             Notifier = new PhoneNotifierViewModel();
                             UIContext.Send(s => Notifier.Start(), null);
-                            FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                            Info = FlashModel.ReadPhoneInfo();
-                            Info.Log(LogType.ConsoleOnly);
+                            FlashModel = (LumiaFlashAppModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
+                            FlashInfo = FlashModel.ReadPhoneInfo();
+                            FlashInfo.Log(LogType.ConsoleOnly);
 
                             FFU ProfileFFU = null;
                             FFU SupportedFFU = null;
@@ -689,7 +722,7 @@ namespace WPinternals
                                     string PlatformID = CurrentFFU.PlatformID;
 
                                     // Check if the current FFU matches the connected phone, so that the FFU can be used for profiling.
-                                    if (Info.PlatformID.StartsWith(PlatformID, StringComparison.OrdinalIgnoreCase))
+                                    if (FlashInfo.PlatformID.StartsWith(PlatformID, StringComparison.OrdinalIgnoreCase))
                                     {
                                         ProfileFFU = CurrentFFU;
                                     }
@@ -704,7 +737,7 @@ namespace WPinternals
 
                             if (ProfileFFU == null)
                             {
-                                List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => Info.PlatformID.StartsWith(e.PlatformID, StringComparison.OrdinalIgnoreCase) && e.Exists()).ToList();
+                                List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => FlashInfo.PlatformID.StartsWith(e.PlatformID, StringComparison.OrdinalIgnoreCase) && e.Exists()).ToList();
                                 ProfileFFU = FFUs.Count > 0
                                     ? new FFU(FFUs[0].Path)
                                     : throw new WPinternalsException("Profile FFU missing", "No profile FFU has been found in the repository for your device. You can add a profile FFU within the download section of the tool or by using the command line.");
@@ -746,9 +779,9 @@ namespace WPinternals
                             LogFile.Log("Custom ROM: " + CustomRomPath, LogType.FileAndConsole);
                             Notifier = new PhoneNotifierViewModel();
                             UIContext.Send(s => Notifier.Start(), null);
-                            FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                            Info = FlashModel.ReadPhoneInfo();
-                            Info.Log(LogType.ConsoleOnly);
+                            FlashModel = (LumiaFlashAppModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
+                            FlashInfo = FlashModel.ReadPhoneInfo();
+                            FlashInfo.Log(LogType.ConsoleOnly);
                             LogFile.Log("Preparing to flash Custom ROM", LogType.FileAndConsole);
                             await LumiaV2UnlockBootViewModel.LumiaV2FlashArchive(Notifier, CustomRomPath);
                             LogFile.Log("Custom ROM flashed successfully", LogType.FileAndConsole);
@@ -777,11 +810,11 @@ namespace WPinternals
                             LogFile.Log("FFU file: " + FFUPath, LogType.FileAndConsole);
                             Notifier = new PhoneNotifierViewModel();
                             UIContext.Send(s => Notifier.Start(), null);
-                            FlashModel = (NokiaFlashModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
-                            Info = FlashModel.ReadPhoneInfo();
-                            Info.Log(LogType.ConsoleOnly);
+                            FlashModel = (LumiaFlashAppModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Flash);
+                            FlashInfo = FlashModel.ReadPhoneInfo();
+                            FlashInfo.Log(LogType.ConsoleOnly);
                             LogFile.Log("Flashing FFU...", LogType.FileAndConsole);
-                            await Task.Run(() => FlashModel.FlashFFU(new FFU(FFUPath), true, (byte)(!Info.IsBootloaderSecure ? FlashOptions.SkipSignatureCheck : 0)));
+                            await Task.Run(() => FlashModel.FlashFFU(new FFU(FFUPath), true, (byte)(!FlashInfo.IsBootloaderSecure ? FlashOptions.SkipSignatureCheck : 0)));
                             LogFile.Log("FFU flashed successfully", LogType.FileAndConsole);
                             Notifier.Stop();
                         }
@@ -1234,680 +1267,6 @@ namespace WPinternals
 
                         LogFile.Log("Root access enabled on image", LogType.FileAndConsole);
                         break;
-                    case "downloadffu":
-                        LogFile.Log("Command: Download FFU", LogType.FileAndConsole);
-                        Notifier = new PhoneNotifierViewModel();
-                        UIContext.Send(s => Notifier.Start(), null);
-                        if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Normal)
-                        {
-                            NormalModel = (NokiaPhoneModel)Notifier.CurrentModel;
-                            ProductCode = NormalModel.ExecuteJsonMethodAsString("ReadProductCode", "ProductCode");
-                        }
-                        else if ((Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader) || (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Flash))
-                        {
-                            FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
-                            Info = FlashModel.ReadPhoneInfo();
-                            ProductCode = Info.ProductCode;
-                        }
-                        else
-                        {
-                            NormalModel = (NokiaPhoneModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Normal);
-                            ProductCode = NormalModel.ExecuteJsonMethodAsString("ReadProductCode", "ProductCode");
-                        }
-                        URL = LumiaDownloadModel.SearchFFU(null, ProductCode, null, out ProductType);
-                        DownloadFolder = args.Length >= 3
-                            ? args[4]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-                        Notifier.Stop();
-                        break;
-                    case "downloadffubyoperatorcode":
-                        LogFile.Log("Command: Download FFU by Operator Code", LogType.FileAndConsole);
-                        if (args.Length < 4)
-                        {
-                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -DownloadFFUbyOperatorCode <Product type> <Operator code> <Optional: Download folder>");
-                        }
-
-                        ProductType = args[2];
-                        LogFile.Log("Product type: " + ProductType, LogType.FileAndConsole);
-                        OperatorCode = args[3];
-                        LogFile.Log("Operator code: " + OperatorCode, LogType.FileAndConsole);
-                        DownloadFolder = args.Length >= 5
-                            ? args[4]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        URL = LumiaDownloadModel.SearchFFU(ProductType, null, OperatorCode);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-                        break;
-                    case "downloadffubyproductcode":
-                        LogFile.Log("Command: Download FFU by Product Code", LogType.FileAndConsole);
-                        if (args.Length < 3)
-                        {
-                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -DownloadFFUbyProductCode <Product code> <Optional: Download folder>");
-                        }
-
-                        ProductCode = args[2];
-                        LogFile.Log("Product code: " + ProductCode, LogType.FileAndConsole);
-                        URL = LumiaDownloadModel.SearchFFU(null, ProductCode, null, out ProductType);
-                        DownloadFolder = args.Length >= 4
-                            ? args[3]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-                        break;
-                    case "downloadffubyproducttype":
-                        LogFile.Log("Command: Download FFU by Product Type", LogType.FileAndConsole);
-                        if (args.Length < 3)
-                        {
-                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -DownloadFFUbyProductType <Product type> <Optional: Download folder>");
-                        }
-
-                        ProductType = args[2];
-                        LogFile.Log("Product type: " + ProductType, LogType.FileAndConsole);
-                        DownloadFolder = args.Length >= 4
-                            ? args[3]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        URL = LumiaDownloadModel.SearchFFU(ProductType, null, null);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-                        break;
-                    case "searchffubyproducttype":
-                        LogFile.Log("Command: Search FFU by Product Type", LogType.FileAndConsole);
-                        if (args.Length < 3)
-                        {
-                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -SearchFFUbyProductType <Lumia model>");
-                        }
-
-                        ProductType = args[2];
-                        LogFile.Log("Lumia model: " + ProductType, LogType.FileAndConsole);
-                        URL = LumiaDownloadModel.SearchFFU(ProductType, null, null);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        break;
-                    case "downloademergency":
-                        LogFile.Log("Command: Download Emergency files", LogType.FileAndConsole);
-                        Notifier = new PhoneNotifierViewModel();
-                        UIContext.Send(s => Notifier.Start(), null);
-                        if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Normal)
-                        {
-                            NormalModel = (NokiaPhoneModel)Notifier.CurrentModel;
-                            ProductType = NormalModel.ExecuteJsonMethodAsString("ReadManufacturerModelName", "ManufacturerModelName");
-                            if (ProductType.Contains('_'))
-                            {
-                                ProductType = ProductType.Substring(0, ProductType.IndexOf('_'));
-                            }
-                        }
-                        else if ((Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader) || (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Flash))
-                        {
-                            FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
-                            Info = FlashModel.ReadPhoneInfo();
-                            ProductType = Info.Type;
-                        }
-                        else
-                        {
-                            NormalModel = (NokiaPhoneModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Normal);
-                            ProductType = NormalModel.ExecuteJsonMethodAsString("ReadManufacturerModelName", "ManufacturerModelName");
-                            if (ProductType.Contains('_'))
-                            {
-                                ProductType = ProductType.Substring(0, ProductType.IndexOf('_'));
-                            }
-                        }
-                        URLs = LumiaDownloadModel.SearchEmergencyFiles(ProductType);
-                        if (URLs != null)
-                        {
-                            DownloadFolder = args.Length >= 3
-                                ? args[2]
-                                : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                            if (!Directory.Exists(DownloadFolder))
-                            {
-                                Directory.CreateDirectory(DownloadFolder);
-                            }
-
-                            LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                            for (int i = 0; i < URLs.Length; i++)
-                            {
-                                LogFile.Log("URL: " + URLs[i], LogType.FileAndConsole);
-                                URI = new Uri(URLs[i]);
-                                EmergencyFileName = Path.GetFileName(URI.LocalPath);
-                                LogFile.Log("File: " + EmergencyFileName, LogType.FileAndConsole);
-                                EmergencyFilePath = Path.Combine(DownloadFolder, EmergencyFileName);
-                                if (i == 0)
-                                {
-                                    ProgrammerPath = EmergencyFilePath;
-                                }
-                                else
-                                {
-                                    PayloadPath = EmergencyFilePath;
-                                }
-
-                                LogFile.Log("Downloading...", LogType.FileAndConsole);
-                                using (System.Net.WebClient myWebClient = new())
-                                {
-                                    await myWebClient.DownloadFileTaskAsync(URLs[i], EmergencyFilePath);
-                                }
-                                LogFile.Log("Download finished", LogType.FileAndConsole);
-                            }
-                            App.Config.AddEmergencyToRepository(ProductType, ProgrammerPath, PayloadPath);
-                        }
-                        Notifier.Stop();
-                        break;
-                    case "downloademergencybyproducttype":
-                        LogFile.Log("Command: Download Emergency files", LogType.FileAndConsole);
-                        if (args.Length < 3)
-                        {
-                            throw new WPinternalsException("Wrong number of arguments. Usage: WPinternals.exe -DownloadEmergencyByProductType <Product type> <Optional: Download folder>");
-                        }
-
-                        ProductType = args[2];
-                        URLs = LumiaDownloadModel.SearchEmergencyFiles(ProductType);
-                        if (URLs != null)
-                        {
-                            DownloadFolder = args.Length >= 4
-                                ? args[3]
-                                : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                            if (!Directory.Exists(DownloadFolder))
-                            {
-                                Directory.CreateDirectory(DownloadFolder);
-                            }
-
-                            LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                            for (int i = 0; i < URLs.Length; i++)
-                            {
-                                LogFile.Log("URL: " + URLs[i], LogType.FileAndConsole);
-                                URI = new Uri(URLs[i]);
-                                EmergencyFileName = Path.GetFileName(URI.LocalPath);
-                                LogFile.Log("File: " + EmergencyFileName, LogType.FileAndConsole);
-                                EmergencyFilePath = Path.Combine(DownloadFolder, EmergencyFileName);
-                                if (i == 0)
-                                {
-                                    ProgrammerPath = EmergencyFilePath;
-                                }
-                                else
-                                {
-                                    PayloadPath = EmergencyFilePath;
-                                }
-
-                                LogFile.Log("Downloading...", LogType.FileAndConsole);
-                                using (System.Net.WebClient myWebClient = new())
-                                {
-                                    await myWebClient.DownloadFileTaskAsync(URLs[i], EmergencyFilePath);
-                                }
-                                LogFile.Log("Download finished", LogType.FileAndConsole);
-                            }
-                            App.Config.AddEmergencyToRepository(ProductType, ProgrammerPath, PayloadPath);
-                        }
-                        break;
-                    case "downloadall":
-                        LogFile.Log("Command: Download all", LogType.FileAndConsole);
-                        Notifier = new PhoneNotifierViewModel();
-                        UIContext.Send(s => Notifier.Start(), null);
-                        if (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Normal)
-                        {
-                            NormalModel = (NokiaPhoneModel)Notifier.CurrentModel;
-                            ProductCode = NormalModel.ExecuteJsonMethodAsString("ReadProductCode", "ProductCode");
-                        }
-                        else if ((Notifier.CurrentInterface == PhoneInterfaces.Lumia_Bootloader) || (Notifier.CurrentInterface == PhoneInterfaces.Lumia_Flash))
-                        {
-                            FlashModel = (NokiaFlashModel)Notifier.CurrentModel;
-                            Info = FlashModel.ReadPhoneInfo();
-                            ProductCode = Info.ProductCode;
-                        }
-                        else
-                        {
-                            NormalModel = (NokiaPhoneModel)await SwitchModeViewModel.SwitchTo(Notifier, PhoneInterfaces.Lumia_Normal);
-                            ProductCode = NormalModel.ExecuteJsonMethodAsString("ReadProductCode", "ProductCode");
-                        }
-                        URL = LumiaDownloadModel.SearchFFU(null, ProductCode, null, out ProductType);
-                        DownloadFolder = args.Length >= 3
-                            ? args[2]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-
-                        URLs = LumiaDownloadModel.SearchEmergencyFiles(ProductType);
-                        if (URLs != null)
-                        {
-                            for (int i = 0; i < URLs.Length; i++)
-                            {
-                                LogFile.Log("URL: " + URLs[i], LogType.FileAndConsole);
-                                URI = new Uri(URLs[i]);
-                                EmergencyFileName = Path.GetFileName(URI.LocalPath);
-                                LogFile.Log("File: " + EmergencyFileName, LogType.FileAndConsole);
-                                EmergencyFilePath = Path.Combine(DownloadFolder, EmergencyFileName);
-                                if (i == 0)
-                                {
-                                    ProgrammerPath = EmergencyFilePath;
-                                }
-                                else
-                                {
-                                    PayloadPath = EmergencyFilePath;
-                                }
-
-                                LogFile.Log("Downloading...", LogType.FileAndConsole);
-                                using (System.Net.WebClient myWebClient = new())
-                                {
-                                    await myWebClient.DownloadFileTaskAsync(URLs[i], EmergencyFilePath);
-                                }
-                                LogFile.Log("Download finished", LogType.FileAndConsole);
-                            }
-                            App.Config.AddEmergencyToRepository(ProductType, ProgrammerPath, PayloadPath);
-                        }
-
-                        if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                        {
-                            ProductType = "RM-1085";
-
-                            URL = LumiaDownloadModel.SearchFFU(ProductType, null, null);
-                            DownloadFolder = args.Length >= 3
-                                ? args[2]
-                                : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                            if (!Directory.Exists(DownloadFolder))
-                            {
-                                Directory.CreateDirectory(DownloadFolder);
-                            }
-
-                            LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                            LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                            URI = new Uri(URL);
-                            FFUFileName = Path.GetFileName(URI.LocalPath);
-                            LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                            FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                            LogFile.Log("Downloading...", LogType.FileAndConsole);
-                            using (System.Net.WebClient myWebClient = new())
-                            {
-                                await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                            }
-                            LogFile.Log("Download finished", LogType.FileAndConsole);
-                            App.Config.AddFfuToRepository(FFUFilePath);
-
-                            if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                            {
-                                throw new WPinternalsException("Unable to find compatible FFU", "No donor-FFU has been found in the repository with a supported OS version. You can add a donor-FFU within the download section of the tool or by using the command line. A donor-FFU can be for a different device and a different CPU than your device. It is only used to gather Operating System specific binaries to be patched and used as part of the unlock process.");
-                            }
-                        }
-                        Notifier.Stop();
-                        break;
-                    case "downloadallbyproducttype":
-                        LogFile.Log("Command: Download all by Product Type", LogType.FileAndConsole);
-                        if (args.Length < 3)
-                        {
-                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -DownloadAllByProductType <Product type> <Optional: Download folder>");
-                        }
-
-                        ProductType = args[2];
-                        LogFile.Log("Product type: " + ProductType, LogType.FileAndConsole);
-                        DownloadFolder = args.Length >= 4
-                            ? args[3]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        URL = LumiaDownloadModel.SearchFFU(ProductType, null, null);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-
-                        URLs = LumiaDownloadModel.SearchEmergencyFiles(ProductType);
-                        if (URLs != null)
-                        {
-                            for (int i = 0; i < URLs.Length; i++)
-                            {
-                                LogFile.Log("URL: " + URLs[i], LogType.FileAndConsole);
-                                URI = new Uri(URLs[i]);
-                                EmergencyFileName = Path.GetFileName(URI.LocalPath);
-                                LogFile.Log("File: " + EmergencyFileName, LogType.FileAndConsole);
-                                EmergencyFilePath = Path.Combine(DownloadFolder, EmergencyFileName);
-                                if (i == 0)
-                                {
-                                    ProgrammerPath = EmergencyFilePath;
-                                }
-                                else
-                                {
-                                    PayloadPath = EmergencyFilePath;
-                                }
-
-                                LogFile.Log("Downloading...", LogType.FileAndConsole);
-                                using (System.Net.WebClient myWebClient = new())
-                                {
-                                    await myWebClient.DownloadFileTaskAsync(URLs[i], EmergencyFilePath);
-                                }
-                                LogFile.Log("Download finished", LogType.FileAndConsole);
-                            }
-                            App.Config.AddEmergencyToRepository(ProductType, ProgrammerPath, PayloadPath);
-                        }
-
-                        if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                        {
-                            ProductType = "RM-1085";
-
-                            URL = LumiaDownloadModel.SearchFFU(ProductType, null, null);
-                            DownloadFolder = args.Length >= 4
-                                ? args[3]
-                                : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                            if (!Directory.Exists(DownloadFolder))
-                            {
-                                Directory.CreateDirectory(DownloadFolder);
-                            }
-
-                            LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                            LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                            URI = new Uri(URL);
-                            FFUFileName = Path.GetFileName(URI.LocalPath);
-                            LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                            FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                            LogFile.Log("Downloading...", LogType.FileAndConsole);
-                            using (System.Net.WebClient myWebClient = new())
-                            {
-                                await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                            }
-                            LogFile.Log("Download finished", LogType.FileAndConsole);
-                            App.Config.AddFfuToRepository(FFUFilePath);
-
-                            if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                            {
-                                throw new WPinternalsException("Unable to find compatible FFU", "No donor-FFU has been found in the repository with a supported OS version. You can add a donor-FFU within the download section of the tool or by using the command line. A donor-FFU can be for a different device and a different CPU than your device. It is only used to gather Operating System specific binaries to be patched and used as part of the unlock process.");
-                            }
-                        }
-                        break;
-                    case "downloadallbyproductcode":
-                        LogFile.Log("Command: Download all by Product Code", LogType.FileAndConsole);
-                        if (args.Length < 3)
-                        {
-                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -DownloadAllByProductCode <Product code> <Optional: Download folder>");
-                        }
-
-                        ProductCode = args[2];
-                        LogFile.Log("Product code: " + ProductCode, LogType.FileAndConsole);
-                        URL = LumiaDownloadModel.SearchFFU(null, ProductCode, null, out ProductType);
-                        DownloadFolder = args.Length >= 4
-                            ? args[3]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-
-                        URLs = LumiaDownloadModel.SearchEmergencyFiles(ProductType);
-                        if (URLs != null)
-                        {
-                            for (int i = 0; i < URLs.Length; i++)
-                            {
-                                LogFile.Log("URL: " + URLs[i], LogType.FileAndConsole);
-                                URI = new Uri(URLs[i]);
-                                EmergencyFileName = Path.GetFileName(URI.LocalPath);
-                                LogFile.Log("File: " + EmergencyFileName, LogType.FileAndConsole);
-                                EmergencyFilePath = Path.Combine(DownloadFolder, EmergencyFileName);
-                                if (i == 0)
-                                {
-                                    ProgrammerPath = EmergencyFilePath;
-                                }
-                                else
-                                {
-                                    PayloadPath = EmergencyFilePath;
-                                }
-
-                                LogFile.Log("Downloading...", LogType.FileAndConsole);
-                                using (System.Net.WebClient myWebClient = new())
-                                {
-                                    await myWebClient.DownloadFileTaskAsync(URLs[i], EmergencyFilePath);
-                                }
-                                LogFile.Log("Download finished", LogType.FileAndConsole);
-                            }
-                            App.Config.AddEmergencyToRepository(ProductType, ProgrammerPath, PayloadPath);
-                        }
-
-                        if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                        {
-                            ProductType = "RM-1085";
-
-                            URL = LumiaDownloadModel.SearchFFU(ProductType, null, null);
-                            DownloadFolder = args.Length >= 4
-                                ? args[3]
-                                : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                            if (!Directory.Exists(DownloadFolder))
-                            {
-                                Directory.CreateDirectory(DownloadFolder);
-                            }
-
-                            LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                            LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                            URI = new Uri(URL);
-                            FFUFileName = Path.GetFileName(URI.LocalPath);
-                            LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                            FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                            LogFile.Log("Downloading...", LogType.FileAndConsole);
-                            using (System.Net.WebClient myWebClient = new())
-                            {
-                                await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                            }
-                            LogFile.Log("Download finished", LogType.FileAndConsole);
-                            App.Config.AddFfuToRepository(FFUFilePath);
-
-                            if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                            {
-                                throw new WPinternalsException("Unable to find compatible FFU", "No donor-FFU has been found in the repository with a supported OS version. You can add a donor-FFU within the download section of the tool or by using the command line. A donor-FFU can be for a different device and a different CPU than your device. It is only used to gather Operating System specific binaries to be patched and used as part of the unlock process.");
-                            }
-                        }
-                        break;
-                    case "downloadallbyoperatorcode":
-                        LogFile.Log("Command: Download FFU by Operator Code", LogType.FileAndConsole);
-                        if (args.Length < 4)
-                        {
-                            throw new ArgumentException("Wrong number of arguments. Usage: WPinternals.exe -DownloadFFUbyOperatorCode <Product type> <Operator code> <Optional: Download folder>");
-                        }
-
-                        ProductType = args[2];
-                        LogFile.Log("Product type: " + ProductType, LogType.FileAndConsole);
-                        OperatorCode = args[3];
-                        LogFile.Log("Operator code: " + OperatorCode, LogType.FileAndConsole);
-                        DownloadFolder = args.Length >= 5
-                            ? args[4]
-                            : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                        if (!Directory.Exists(DownloadFolder))
-                        {
-                            Directory.CreateDirectory(DownloadFolder);
-                        }
-
-                        LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                        URL = LumiaDownloadModel.SearchFFU(ProductType, null, OperatorCode);
-                        LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                        URI = new Uri(URL);
-                        FFUFileName = Path.GetFileName(URI.LocalPath);
-                        LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                        FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                        LogFile.Log("Downloading...", LogType.FileAndConsole);
-                        using (System.Net.WebClient myWebClient = new())
-                        {
-                            await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                        }
-                        LogFile.Log("Download finished", LogType.FileAndConsole);
-                        App.Config.AddFfuToRepository(FFUFilePath);
-
-                        URLs = LumiaDownloadModel.SearchEmergencyFiles(ProductType);
-                        if (URLs != null)
-                        {
-                            for (int i = 0; i < URLs.Length; i++)
-                            {
-                                LogFile.Log("URL: " + URLs[i], LogType.FileAndConsole);
-                                URI = new Uri(URLs[i]);
-                                EmergencyFileName = Path.GetFileName(URI.LocalPath);
-                                LogFile.Log("File: " + EmergencyFileName, LogType.FileAndConsole);
-                                EmergencyFilePath = Path.Combine(DownloadFolder, EmergencyFileName);
-                                if (i == 0)
-                                {
-                                    ProgrammerPath = EmergencyFilePath;
-                                }
-                                else
-                                {
-                                    PayloadPath = EmergencyFilePath;
-                                }
-
-                                LogFile.Log("Downloading...", LogType.FileAndConsole);
-                                using (System.Net.WebClient myWebClient = new())
-                                {
-                                    await myWebClient.DownloadFileTaskAsync(URLs[i], EmergencyFilePath);
-                                }
-                                LogFile.Log("Download finished", LogType.FileAndConsole);
-                            }
-                            App.Config.AddEmergencyToRepository(ProductType, ProgrammerPath, PayloadPath);
-                        }
-
-                        if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                        {
-                            ProductType = "RM-1085";
-
-                            URL = LumiaDownloadModel.SearchFFU(ProductType, null, null);
-                            DownloadFolder = args.Length >= 5
-                                ? args[4]
-                                : Environment.ExpandEnvironmentVariables("%ALLUSERSPROFILE%\\WPInternals\\Repository\\" + ProductType.ToUpper());
-
-                            if (!Directory.Exists(DownloadFolder))
-                            {
-                                Directory.CreateDirectory(DownloadFolder);
-                            }
-
-                            LogFile.Log("Download folder: " + DownloadFolder, LogType.FileAndConsole);
-                            LogFile.Log("URL: " + URL, LogType.FileAndConsole);
-                            URI = new Uri(URL);
-                            FFUFileName = Path.GetFileName(URI.LocalPath);
-                            LogFile.Log("File: " + FFUFileName, LogType.FileAndConsole);
-                            FFUFilePath = Path.Combine(DownloadFolder, FFUFileName);
-                            LogFile.Log("Downloading...", LogType.FileAndConsole);
-                            using (System.Net.WebClient myWebClient = new())
-                            {
-                                await myWebClient.DownloadFileTaskAsync(URL, FFUFilePath);
-                            }
-                            LogFile.Log("Download finished", LogType.FileAndConsole);
-                            App.Config.AddFfuToRepository(FFUFilePath);
-
-                            if (!App.Config.FFURepository.Any(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)))
-                            {
-                                throw new WPinternalsException("Unable to find compatible FFU", "No donor-FFU has been found in the repository with a supported OS version. You can add a donor-FFU within the download section of the tool or by using the command line. A donor-FFU can be for a different device and a different CPU than your device. It is only used to gather Operating System specific binaries to be patched and used as part of the unlock process.");
-                            }
-                        }
-                        break;
                     case "rewritepartitionsfrommassstorage":
                         if (args.Length < 2)
                         {
@@ -1968,6 +1327,7 @@ namespace WPinternals
                         LogFile.Log("WPinternals -ClearNV", LogType.ConsoleOnly);
                         LogFile.Log("WPinternals -ReadGPT", LogType.ConsoleOnly);
                         LogFile.Log("WPinternals -BackupGPT <Path to xml-file>", LogType.ConsoleOnly);
+                        LogFile.Log("WPinternals -ConvertGPT <Path to GPT-file> <Path to xml-file>", LogType.ConsoleOnly);
                         LogFile.Log("WPinternals -RestoreGPT <Path to xml-file>", LogType.ConsoleOnly);
                         LogFile.Log("WPinternals -MergeGPT <Path to input-xml-file> <Path to input-xml-file>", LogType.ConsoleOnly);
                         LogFile.Log("                <Optional: Path to output-xml-file>", LogType.ConsoleOnly);
@@ -2055,12 +1415,18 @@ namespace WPinternals
                     Microsoft.Win32.SafeHandles.SafeFileHandle safeFileHandle = new(stdHandle, true);
                     FileStream fileStream = new(safeFileHandle, FileAccess.Write);
                     Encoding encoding = Encoding.GetEncoding(MY_CODE_PAGE);
-                    StreamWriter standardOutput = new(fileStream, encoding);
-                    standardOutput.AutoFlush = true;
+                    StreamWriter standardOutput = new(fileStream, encoding)
+                    {
+                        AutoFlush = true
+                    };
                     Console.SetOut(standardOutput);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                    LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                    LogFile.Log(ex.Message, LogType.FileAndConsole);
+                    LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
                 }
             }
 

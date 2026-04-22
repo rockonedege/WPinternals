@@ -25,6 +25,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -45,7 +46,7 @@ namespace WPinternals
             UIContext = SynchronizationContext.Current;
 
             // Setting these properties in XAML results in an error. Why?
-            GifImage.GifSource = "/aerobusy.gif";
+            GifImage.GifSource = "/Assets/aerobusy.gif";
             GifImage.AutoStart = true;
 
             Loaded += Empty_Loaded;

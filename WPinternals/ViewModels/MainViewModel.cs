@@ -25,6 +25,9 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using WPinternals.HelperClasses;
+using WPinternals.Config;
+using WPinternals.Models.Lumia;
 
 namespace WPinternals
 {
@@ -45,7 +48,10 @@ namespace WPinternals
         Lumia_Bootloader,
         Qualcomm_Download,
         Qualcomm_Flash,
-        Lumia_BadMassStorage
+        Lumia_BadMassStorage,
+        Lumia_PhoneInfo,
+        SimpleIO,
+        UFP
     };
 
     // Create this class on the UI thread, after the main-window of the application is initialized.

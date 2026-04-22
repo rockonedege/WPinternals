@@ -24,6 +24,7 @@ using System.Globalization;
 using System.Threading;
 using System.Windows;
 using System.Windows.Media;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -149,7 +150,7 @@ namespace WPinternals
 
         protected override Size MeasureOverride(Size availableSize)
         {
-            var resultSize = new Size(availableSize.Width, 0);
+            Size resultSize = new Size(availableSize.Width, 0);
 
 #if NETCORE
             FormattedText formatted = new FormattedText(
@@ -316,13 +317,19 @@ namespace WPinternals
                 {
                     filename = System.IO.Path.GetFileName(Text);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LogFile.LogException(ex, LogType.FileOnly);
+                }
                 string directory = "";
                 try
                 {
                     directory = System.IO.Path.GetDirectoryName(Text);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LogFile.LogException(ex, LogType.FileOnly);
+                }
                 FormattedText formatted;
                 bool widthOK = false;
                 bool changedWidth = false;
@@ -423,9 +430,10 @@ namespace WPinternals
 
             if (SaveDialog)
             {
-                Microsoft.Win32.SaveFileDialog savedlg = new();
-
-                savedlg.FileName = Path ?? DefaultFileName;
+                Microsoft.Win32.SaveFileDialog savedlg = new()
+                {
+                    FileName = Path ?? DefaultFileName
+                };
 
                 // Show open file dialog box
                 result = savedlg.ShowDialog();
@@ -440,9 +448,10 @@ namespace WPinternals
             else
             {
                 // Select file
-                Microsoft.Win32.OpenFileDialog dlg = new();
-
-                dlg.FileName = Path ?? DefaultFileName;
+                Microsoft.Win32.OpenFileDialog dlg = new()
+                {
+                    FileName = Path ?? DefaultFileName
+                };
 
                 // Show open file dialog box
                 result = dlg.ShowDialog();

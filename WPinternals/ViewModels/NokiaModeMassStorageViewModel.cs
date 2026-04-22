@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
+using WPinternals.Models.Lumia;
 
 namespace WPinternals
 {
@@ -27,10 +28,10 @@ namespace WPinternals
         private readonly MassStorage CurrentModel;
         private readonly Action<PhoneInterfaces?> RequestModeSwitch;
 
-        internal NokiaModeMassStorageViewModel(NokiaPhoneModel CurrentModel, Action<PhoneInterfaces?> RequestModeSwitch)
+        internal NokiaModeMassStorageViewModel(MassStorage CurrentModel, Action<PhoneInterfaces?> RequestModeSwitch)
             : base()
         {
-            this.CurrentModel = (MassStorage)CurrentModel;
+            this.CurrentModel = CurrentModel;
             this.RequestModeSwitch = RequestModeSwitch;
         }
 
@@ -62,6 +63,12 @@ namespace WPinternals
             {
                 case "Normal":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Normal);
+                    break;
+                case "PhoneInfo":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_PhoneInfo);
+                    break;
+                case "BootMgr":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_Bootloader);
                     break;
                 case "Label":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Label);

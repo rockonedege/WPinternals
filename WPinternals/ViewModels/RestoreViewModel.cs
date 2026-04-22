@@ -21,6 +21,8 @@
 using System;
 using System.IO;
 using System.Threading;
+using WPinternals.HelperClasses;
+using WPinternals.Models.UEFIApps.Flash;
 
 namespace WPinternals
 {
@@ -79,7 +81,7 @@ namespace WPinternals
 
         internal void RestoreTask(string EFIESPPath, string MainOSPath, string DataPath)
         {
-            new Thread(() =>
+            new Thread(async () =>
                 {
                     bool Result = true;
 
@@ -113,11 +115,13 @@ namespace WPinternals
                         Result = false;
                     }
 
-                    NokiaFlashModel Phone = (NokiaFlashModel)PhoneNotifier.CurrentModel;
+                    LumiaFlashAppModel Phone = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
 
                     BusyViewModel Busy = new("Restoring...", MaxProgressValue: TotalSizeSectors, UIContext: UIContext);
                     ProgressUpdater Updater = Busy.ProgressUpdater;
                     ActivateSubContext(Busy);
+
+                    GPT GPT = await LumiaUnlockBootloaderViewModel.ReadGPTFromFlashOrBootMgr(PhoneNotifier);
 
                     int i = 0;
                     if (Result)
@@ -128,7 +132,7 @@ namespace WPinternals
                             {
                                 i++;
                                 Busy.Message = "Restoring partition EFIESP (" + i.ToString() + "/" + PartitionCount.ToString() + ")";
-                                Phone.FlashRawPartition(EFIESPPath, "EFIESP", Updater);
+                                Phone.FlashRawPartition(GPT, EFIESPPath, "EFIESP", Updater);
                             }
                         }
                         catch (Exception Ex)
@@ -146,7 +150,7 @@ namespace WPinternals
                             {
                                 i++;
                                 Busy.Message = "Restoring partition MainOS (" + i.ToString() + "/" + PartitionCount.ToString() + ")";
-                                Phone.FlashRawPartition(EFIESPPath, "MainOS", Updater);
+                                Phone.FlashRawPartition(GPT, EFIESPPath, "MainOS", Updater);
                             }
                         }
                         catch (Exception Ex)
@@ -164,7 +168,7 @@ namespace WPinternals
                             {
                                 i++;
                                 Busy.Message = "Restoring partition Data (" + i.ToString() + "/" + PartitionCount.ToString() + ")";
-                                Phone.FlashRawPartition(EFIESPPath, "Data", Updater);
+                                Phone.FlashRawPartition(GPT, EFIESPPath, "Data", Updater);
                             }
                         }
                         catch (Exception Ex)

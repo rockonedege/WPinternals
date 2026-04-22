@@ -21,6 +21,9 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia.NCSd;
+using WPinternals.Terminal;
 
 namespace WPinternals
 {
@@ -31,10 +34,10 @@ namespace WPinternals
 
     internal class NokiaLabelViewModel : ContextViewModel
     {
-        private readonly NokiaPhoneModel CurrentModel;
+        private readonly NokiaCareSuiteModel CurrentModel;
         private readonly Action<PhoneInterfaces> RequestModeSwitch;
 
-        internal NokiaLabelViewModel(NokiaPhoneModel CurrentModel, Action<PhoneInterfaces> RequestModeSwitch)
+        internal NokiaLabelViewModel(NokiaCareSuiteModel CurrentModel, Action<PhoneInterfaces> RequestModeSwitch)
             : base()
         {
             this.RequestModeSwitch = RequestModeSwitch;
@@ -72,16 +75,27 @@ namespace WPinternals
             //byte[] Meid = CurrentModel.ExecuteJsonMethodAsBytes("ReadMeid", "Meid"); // error
             //string Test = CurrentModel.ExecuteJsonMethodAsString("ReadManufacturingData", ""); -> This method is only possible in Label-mode.
 
-            byte[] AsskMask = new byte[0x10] { 1, 0, 16, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64 };
+            byte[] AsskMask = [1, 0, 16, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64];
             byte[] Challenge = new byte[0x88];
-            Dictionary<string, object> Params = new();
-            Params.Add("AsskMask", AsskMask);
-            Params.Add("Challenge", Challenge);
-            Params.Add("AsicIndex", 0);
+            Dictionary<string, object> Params = new()
+            {
+                {
+                    "AsskMask",
+                    AsskMask
+                },
+                {
+                    "Challenge",
+                    Challenge
+                },
+                {
+                    "AsicIndex",
+                    0
+                }
+            };
             byte[] TerminalResponseBytes = CurrentModel.ExecuteJsonMethodAsBytes("TerminalChallenge", Params, "TerminalResponse");
             if (TerminalResponseBytes != null)
             {
-                TerminalResponse TerminalResponse = Terminal.Parse(TerminalResponseBytes, 0);
+                TerminalResponse TerminalResponse = Terminal.Terminal.Parse(TerminalResponseBytes, 0);
                 if (TerminalResponse != null)
                 {
                     PublicID = TerminalResponse.PublicId;
@@ -101,11 +115,20 @@ namespace WPinternals
             IMEI = CurrentModel.ExecuteJsonMethodAsString("ReadSerialNumber", "SerialNumber"); // IMEI
             LogFile.Log("IMEI: " + IMEI);
             BluetoothMac = CurrentModel.ExecuteJsonMethodAsBytes("ReadBtId", "BtId"); // 6 bytes: bc c6 ...
-            LogFile.Log("Bluetooth MAC: " + Converter.ConvertHexToString(BluetoothMac, " "));
-            WlanMac = CurrentModel.ExecuteJsonMethodAsBytes("ReadWlanMacAddress", "WlanMacAddress1"); // 6 bytes
-            LogFile.Log("WLAN MAC: " + Converter.ConvertHexToString(WlanMac, " "));
 
-            IsBootloaderSecurityEnabled = (bool)CurrentModel.ExecuteJsonMethodAsBoolean("ReadProductionDoneState", "ProductionDone");
+            if (BluetoothMac != null)
+            {
+                LogFile.Log("Bluetooth MAC: " + Converter.ConvertHexToString(BluetoothMac, " "));
+            }
+
+            WlanMac = CurrentModel.ExecuteJsonMethodAsBytes("ReadWlanMacAddress", "WlanMacAddress1"); // 6 bytes
+
+            if (WlanMac != null)
+            {
+                LogFile.Log("WLAN MAC: " + Converter.ConvertHexToString(WlanMac, " "));
+            }
+
+            IsBootloaderSecurityEnabled = CurrentModel.ExecuteJsonMethodAsBoolean("ReadProductionDoneState", "ProductionDone") ?? false;
             LogFile.Log("Bootloader Security: " + ((bool)IsBootloaderSecurityEnabled ? "Enabled" : "Disabled"));
 
             Params = new Dictionary<string, object>
@@ -282,6 +305,9 @@ namespace WPinternals
             {
                 case "Flash":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Flash);
+                    break;
+                case "PhoneInfo":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_PhoneInfo);
                     break;
                 case "Label":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Label);

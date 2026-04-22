@@ -24,6 +24,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using WPinternals.Config;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia.UEFI.Flash;
+using WPinternals.Models.UEFIApps.Flash;
+using WPinternals.Models.UEFIApps.PhoneInfo;
 
 namespace WPinternals
 {
@@ -35,7 +40,8 @@ namespace WPinternals
     internal enum MachineState
     {
         Default,
-        LumiaUnlockBoot
+        LumiaUnlockBoot,
+        LumiaGetGPT
     };
 
     internal class LumiaUnlockBootViewModel : ContextViewModel
@@ -90,7 +96,7 @@ namespace WPinternals
                 return;
             }
 
-            if (State == MachineState.LumiaUnlockBoot)
+            if ((State == MachineState.LumiaGetGPT) || (State == MachineState.LumiaUnlockBoot))
             {
                 return;
             }
@@ -133,11 +139,11 @@ namespace WPinternals
                         {
                             // Some phones, like Lumia 928 verizon, do not support the Terminal interface!
                             // To read the RootKeyHash we use ReadParam("RRKH"), instead of GetTerminalResponse().RootKeyHash.
-                            RootKeyHash = ((NokiaFlashModel)PhoneNotifier.CurrentModel).ReadParam("RRKH");
+                            RootKeyHash = ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).ReadParam("RRKH");
 
                             TestPos = 1;
 
-                            UefiSecurityStatusResponse SecurityStatus = ((NokiaFlashModel)PhoneNotifier.CurrentModel).ReadSecurityStatus();
+                            UefiSecurityStatusResponse SecurityStatus = ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).ReadSecurityStatus();
                             if (SecurityStatus != null)
                             {
                                 IsBootLoaderUnlocked = SecurityStatus.AuthenticationStatus || SecurityStatus.RdcStatus || !SecurityStatus.SecureFfuEfuseStatus;
@@ -145,20 +151,21 @@ namespace WPinternals
 
                             TestPos = 2;
 
-                            PhoneInfo Info = ((NokiaFlashModel)PhoneNotifier.CurrentModel).ReadPhoneInfo();
+                            LumiaFlashAppPhoneInfo FlashInfo = ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).ReadPhoneInfo();
+
                             if (SecurityStatus == null)
                             {
-                                IsBootLoaderUnlocked = !Info.IsBootloaderSecure;
+                                IsBootLoaderUnlocked = !FlashInfo.IsBootloaderSecure;
                             }
 
                             if (RootKeyHash == null)
                             {
-                                RootKeyHash = Info.RKH ?? (new byte[32]);
+                                RootKeyHash = FlashInfo.RKH ?? (new byte[32]);
                             }
 
                             TestPos = 3;
 
-                            if (Info.FlashAppProtocolVersionMajor < 2)
+                            if (FlashInfo.FlashAppProtocolVersionMajor < 2)
                             {
                                 // This action is executed after the resources are selected by the user.
                                 void ReturnFunction(string FFUPath, string LoadersPath, string SBL3Path, string ProfileFFUPath, string EDEPath, string SupportedFFUPath, bool DoFixBoot)
@@ -173,7 +180,6 @@ namespace WPinternals
                                     this.LoadersPath = LoadersPath;
                                     this.SBL3Path = SBL3Path;
                                     this.SupportedFFUPath = SupportedFFUPath;
-                                    StorePaths();
 
                                     LogFile.Log("Processing resources:");
                                     LogFile.Log("FFU: " + FFUPath);
@@ -189,14 +195,19 @@ namespace WPinternals
 
                                     ActivateSubContext(new BusyViewModel("Processing resources..."));
 
-                                    if (DoUnlock)
+                                    Task.Run(async () =>
                                     {
-                                        Task.Run(async () => await LumiaUnlockBootloaderViewModel.LumiaV1UnlockFirmware(PhoneNotifier, FFUPath, LoadersPath, SBL3Path, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage));
-                                    }
-                                    else
-                                    {
-                                        Task.Run(async () => await LumiaUnlockBootloaderViewModel.LumiaV1RelockFirmware(PhoneNotifier, FFUPath, LoadersPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage));
-                                    }
+                                        await StorePaths();
+
+                                        if (DoUnlock)
+                                        {
+                                            await LumiaUnlockBootloaderViewModel.LumiaV1UnlockFirmware(PhoneNotifier, FFUPath, LoadersPath, SBL3Path, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
+                                        }
+                                        else
+                                        {
+                                            await LumiaUnlockBootloaderViewModel.LumiaV1RelockFirmware(PhoneNotifier, FFUPath, LoadersPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
+                                        }
+                                    });
                                 }
 
                                 if (DoUnlock)
@@ -210,19 +221,6 @@ namespace WPinternals
                             }
                             else
                             {
-                                bool AlreadyUnlocked = false;
-                                if (DoUnlock)
-                                {
-                                    NokiaFlashModel FlashModel = (NokiaFlashModel)PhoneNotifier.CurrentModel;
-                                    GPT GPT = FlashModel.ReadGPT();
-                                    if ((GPT.GetPartition("IS_UNLOCKED") != null) || (GPT.GetPartition("BACKUP_EFIESP") != null))
-                                    {
-                                        //ExitMessage("Phone is already unlocked", null);
-                                        //return;
-                                        AlreadyUnlocked = true;
-                                    }
-                                }
-
                                 TestPos = 4;
 
                                 // Stop responding to device arrival here, because all connections are handled by subfunctions, not here.
@@ -240,7 +238,6 @@ namespace WPinternals
                                         this.ProfileFFUPath = ProfileFFUPath;
                                         this.EDEPath = EDEPath;
                                         this.SupportedFFUPath = SupportedFFUPath;
-                                        StorePaths();
 
                                         if (DoFixBoot)
                                         {
@@ -260,20 +257,39 @@ namespace WPinternals
                                         }
 
                                         Task.Run(async () =>
+                                        {
+                                            await StorePaths();
+
+                                            bool AlreadyUnlocked = false;
+
+                                            MachineState OriginalState = State;
+                                            State = MachineState.LumiaGetGPT; // Stop handling arrival notifications in this screen
+                                            bool OriginalIsSwitchingInterface = IsSwitchingInterface;
+                                            IsSwitchingInterface = true; // Stop handling arrival notifications in MainViewModel
+
+                                            GPT GPT = await LumiaUnlockBootloaderViewModel.ReadGPTFromFlashOrBootMgr(PhoneNotifier);
+
+                                            IsSwitchingInterface = OriginalIsSwitchingInterface;
+                                            State = OriginalState;
+
+                                            if ((GPT.GetPartition("IS_UNLOCKED") != null) || (GPT.GetPartition("BACKUP_EFIESP") != null))
                                             {
-                                                if (DoFixBoot)
-                                                {
-                                                    await LumiaV2UnlockBootViewModel.LumiaV2FixBoot(PhoneNotifier, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
-                                                }
-                                                else if (!AlreadyUnlocked)
-                                                {
-                                                    await LumiaUnlockBootloaderViewModel.LumiaV2UnlockUEFI(PhoneNotifier, ProfileFFUPath, EDEPath, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
-                                                }
-                                                else
-                                                {
-                                                    await LumiaUnlockBootloaderViewModel.LumiaV2UnlockUEFI(PhoneNotifier, ProfileFFUPath, EDEPath, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage, true);
-                                                }
-                                            });
+                                                AlreadyUnlocked = true;
+                                            }
+
+                                            if (DoFixBoot)
+                                            {
+                                                await LumiaV2UnlockBootViewModel.LumiaV2FixBoot(PhoneNotifier, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
+                                            }
+                                            else if (!AlreadyUnlocked)
+                                            {
+                                                await LumiaUnlockBootloaderViewModel.LumiaV2UnlockUEFI(PhoneNotifier, ProfileFFUPath, EDEPath, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
+                                            }
+                                            else
+                                            {
+                                                await LumiaUnlockBootloaderViewModel.LumiaV2UnlockUEFI(PhoneNotifier, ProfileFFUPath, EDEPath, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage, true);
+                                            }
+                                        });
                                     }
                                     else
                                     {
@@ -281,7 +297,7 @@ namespace WPinternals
                                         {
                                             FFU ProfileFFU = null;
 
-                                            List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => Info.PlatformID.StartsWith(e.PlatformID, StringComparison.OrdinalIgnoreCase) && e.Exists()).ToList();
+                                            List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => FlashInfo.PlatformID.StartsWith(e.PlatformID, StringComparison.OrdinalIgnoreCase) && e.Exists()).ToList();
                                             ProfileFFU = FFUs.Count > 0
                                                 ? new FFU(FFUs[0].Path)
                                                 : throw new WPinternalsException("Profile FFU missing", "No profile FFU has been found in the repository for your device. You can add a profile FFU within the download section of the tool or by using the command line.");
@@ -295,14 +311,72 @@ namespace WPinternals
 
                                 TestPos = 5;
 
-                                if (DoUnlock)
+                                IsSwitchingInterface = true;
+
+                                Task.Run(async () =>
                                 {
-                                    ActivateSubContext(new BootUnlockResourcesViewModel("Lumia Flash mode", RootKeyHash, SwitchToFlashRom, SwitchToUndoRoot, SwitchToDownload, ReturnFunction, Abort, IsBootLoaderUnlocked, true, Info.PlatformID, Info.Type));
-                                }
-                                else
-                                {
-                                    ActivateSubContext(new BootRestoreResourcesViewModel("Lumia Flash mode", RootKeyHash, SwitchToFlashRom, SwitchToUndoRoot, SwitchToDownload, ReturnFunction, Abort, IsBootLoaderUnlocked, true, Info.PlatformID, Info.Type));
-                                }
+                                    MachineState OriginalState = State;
+                                    State = MachineState.LumiaGetGPT; // Stop handling arrival notifications in this screen
+                                    bool OriginalIsSwitchingInterface = IsSwitchingInterface;
+                                    IsSwitchingInterface = true; // Stop handling arrival notifications in MainViewModel
+
+                                    bool ModernFlashApp = ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).ReadPhoneInfo().FlashAppProtocolVersionMajor >= 2;
+                                    if (ModernFlashApp)
+                                    {
+                                        ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).SwitchToPhoneInfoAppContext();
+                                    }
+                                    else
+                                    {
+                                        ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).SwitchToPhoneInfoAppContextLegacy();
+                                    }
+
+                                    if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_PhoneInfo)
+                                    {
+                                        await PhoneNotifier.WaitForArrival();
+                                    }
+
+                                    if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_PhoneInfo)
+                                    {
+                                        throw new WPinternalsException("Unexpected Mode");
+                                    }
+
+                                    LumiaPhoneInfoAppModel LumiaPhoneInfoModel = (LumiaPhoneInfoAppModel)PhoneNotifier.CurrentModel;
+                                    LumiaPhoneInfoAppPhoneInfo PhoneInfo = LumiaPhoneInfoModel.ReadPhoneInfo();
+
+                                    IsSwitchingInterface = true;
+
+                                    ModernFlashApp = PhoneInfo.PhoneInfoAppVersionMajor >= 2;
+                                    if (ModernFlashApp)
+                                    {
+                                        LumiaPhoneInfoModel.SwitchToFlashAppContext();
+                                    }
+                                    else
+                                    {
+                                        LumiaPhoneInfoModel.ContinueBoot();
+                                    }
+
+                                    if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                                    {
+                                        await PhoneNotifier.WaitForArrival();
+                                    }
+
+                                    if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                                    {
+                                        throw new WPinternalsException("Unexpected Mode");
+                                    }
+
+                                    IsSwitchingInterface = OriginalIsSwitchingInterface;
+                                    State = OriginalState;
+
+                                    if (DoUnlock)
+                                    {
+                                        ActivateSubContext(new BootUnlockResourcesViewModel("Lumia Flash mode", RootKeyHash, SwitchToFlashRom, SwitchToUndoRoot, SwitchToDownload, ReturnFunction, Abort, IsBootLoaderUnlocked, true, FlashInfo.PlatformID, PhoneInfo.Type));
+                                    }
+                                    else
+                                    {
+                                        ActivateSubContext(new BootRestoreResourcesViewModel("Lumia Flash mode", RootKeyHash, SwitchToFlashRom, SwitchToUndoRoot, SwitchToDownload, ReturnFunction, Abort, IsBootLoaderUnlocked, true, FlashInfo.PlatformID, PhoneInfo.Type));
+                                    }
+                                });
                             }
                         }
                         catch (Exception Ex)
@@ -348,7 +422,6 @@ namespace WPinternals
                             this.FFUPath = FFUPath;
                             this.LoadersPath = LoadersPath;
                             this.SBL3Path = SBL3Path;
-                            StorePaths();
 
                             LogFile.Log("Processing resources:");
                             LogFile.Log("FFU: " + FFUPath);
@@ -364,14 +437,19 @@ namespace WPinternals
 
                             ActivateSubContext(new BusyViewModel("Processing resources..."));
 
-                            if (DoUnlock)
+                            Task.Run(async () =>
                             {
-                                Task.Run(async () => await LumiaUnlockBootloaderViewModel.LumiaV1UnlockFirmware(PhoneNotifier, FFUPath, LoadersPath, SBL3Path, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage));
-                            }
-                            else
-                            {
-                                Task.Run(async () => await LumiaUnlockBootloaderViewModel.LumiaV1RelockFirmware(PhoneNotifier, FFUPath, LoadersPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage));
-                            }
+                                await StorePaths();
+
+                                if (DoUnlock)
+                                {
+                                    await LumiaUnlockBootloaderViewModel.LumiaV1UnlockFirmware(PhoneNotifier, FFUPath, LoadersPath, SBL3Path, SupportedFFUPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
+                                }
+                                else
+                                {
+                                    await LumiaUnlockBootloaderViewModel.LumiaV1RelockFirmware(PhoneNotifier, FFUPath, LoadersPath, SetWorkingStatus, UpdateWorkingStatus, ExitMessage, ExitMessage);
+                                }
+                            });
                         };
 
                         if (DoUnlock)
@@ -443,15 +521,15 @@ namespace WPinternals
         {
             // SwitchModeViewModel must be created on the UI thread
             IsSwitchingInterface = false;
-            UIContext.Post((t) =>
+            UIContext.Post(async (t) =>
                 {
-                    StorePaths();
+                    await StorePaths();
                     LogFile.Log("Aborting.");
                     Exit();
                 }, null);
         }
 
-        private void StorePaths()
+        private async Task StorePaths()
         {
             RegistryKey Key = Registry.CurrentUser.OpenSubKey(@"Software\WPInternals", true) ?? Registry.CurrentUser.CreateSubKey(@"Software\WPInternals");
 
@@ -510,8 +588,59 @@ namespace WPinternals
 
             if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Qualcomm_Download && PhoneNotifier.CurrentInterface != PhoneInterfaces.Qualcomm_Flash)
             {
-                NokiaFlashModel Model = (NokiaFlashModel)PhoneNotifier.CurrentModel;
-                PhoneInfo Info = Model.ReadPhoneInfo();
+                LumiaFlashAppModel Model = (LumiaFlashAppModel)PhoneNotifier.CurrentModel;
+                LumiaFlashAppPhoneInfo FlashInfo = Model.ReadPhoneInfo();
+
+                MachineState OriginalState = State;
+                State = MachineState.LumiaGetGPT; // Stop handling arrival notifications in this screen
+                bool OriginalIsSwitchingInterface = IsSwitchingInterface;
+                IsSwitchingInterface = true; // Stop handling arrival notifications in MainViewModel
+
+                bool ModernFlashApp = ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).ReadPhoneInfo().FlashAppProtocolVersionMajor >= 2;
+                if (ModernFlashApp)
+                {
+                    ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).SwitchToPhoneInfoAppContext();
+                }
+                else
+                {
+                    ((LumiaFlashAppModel)PhoneNotifier.CurrentModel).SwitchToPhoneInfoAppContextLegacy();
+                }
+
+                if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_PhoneInfo)
+                {
+                    await PhoneNotifier.WaitForArrival();
+                }
+
+                if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_PhoneInfo)
+                {
+                    throw new WPinternalsException("Unexpected Mode");
+                }
+
+                LumiaPhoneInfoAppModel LumiaPhoneInfoModel = (LumiaPhoneInfoAppModel)PhoneNotifier.CurrentModel;
+                LumiaPhoneInfoAppPhoneInfo PhoneInfo = LumiaPhoneInfoModel.ReadPhoneInfo();
+
+                ModernFlashApp = PhoneInfo.PhoneInfoAppVersionMajor >= 2;
+                if (ModernFlashApp)
+                {
+                    LumiaPhoneInfoModel.SwitchToFlashAppContext();
+                }
+                else
+                {
+                    LumiaPhoneInfoModel.ContinueBoot();
+                }
+
+                if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                {
+                    await PhoneNotifier.WaitForArrival();
+                }
+
+                if (PhoneNotifier.CurrentInterface != PhoneInterfaces.Lumia_Flash)
+                {
+                    throw new WPinternalsException("Unexpected Mode");
+                }
+
+                IsSwitchingInterface = OriginalIsSwitchingInterface;
+                State = OriginalState;
 
                 if (EDEPath == null)
                 {
@@ -524,7 +653,7 @@ namespace WPinternals
                 {
                     Key.SetValue("EDEPath", EDEPath);
 
-                    App.Config.AddEmergencyToRepository(Info.Type, EDEPath, null);
+                    App.Config.AddEmergencyToRepository(PhoneInfo.Type, EDEPath, null);
                 }
             }
 
@@ -557,8 +686,10 @@ namespace WPinternals
             {
                 State = MachineState.Default;
                 Exit();
-            });
-            SuccessMessageViewModel.SubMessage = SubMessage;
+            })
+            {
+                SubMessage = SubMessage
+            };
             ActivateSubContext(SuccessMessageViewModel);
         }
 
@@ -642,7 +773,10 @@ namespace WPinternals
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
 
             try
             {
@@ -658,7 +792,10 @@ namespace WPinternals
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
 
             List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => PlatformID.StartsWith(e.PlatformID, StringComparison.OrdinalIgnoreCase) && e.Exists()).ToList();
             if (FFUs.Count > 0)
@@ -688,7 +825,10 @@ namespace WPinternals
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
 
             try
             {
@@ -703,7 +843,10 @@ namespace WPinternals
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogFile.LogException(ex, LogType.FileOnly);
+            }
 
             TempEDEPath = LumiaV2UnlockBootViewModel.GetProgrammerPath(RootKeyHash, ProductType);
             if (TempEDEPath != null)
@@ -732,8 +875,13 @@ namespace WPinternals
                     FFU FFU = new(_FFUPath);
                     IsSupportedFfuNeeded = !App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V1.1-EFIESP").TargetVersions.Any(v => v.Description == FFU.GetOSVersion());
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                    LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                    LogFile.Log(ex.Message, LogType.FileAndConsole);
+                    LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                     IsSupportedFfuNeeded = false;
                     return;
                 }
@@ -753,7 +901,10 @@ namespace WPinternals
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
 
                     try
                     {
@@ -770,7 +921,10 @@ namespace WPinternals
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
 
                     List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V1.1-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)).ToList();
                     if (FFUs.Count > 0)
@@ -794,8 +948,13 @@ namespace WPinternals
                     FFU ProfileFFU = new(_ProfileFFUPath);
                     IsSupportedFfuNeeded = !App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == ProfileFFU.GetOSVersion());
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                    LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                    LogFile.Log(ex.Message, LogType.FileAndConsole);
+                    LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                     IsSupportedFfuNeeded = false;
                     return;
                 }
@@ -815,7 +974,10 @@ namespace WPinternals
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
 
                     try
                     {
@@ -832,7 +994,10 @@ namespace WPinternals
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
 
                     List<FFUEntry> FFUs = App.Config.FFURepository.Where(e => App.PatchEngine.PatchDefinitions.First(p => p.Name == "SecureBootHack-V2-EFIESP").TargetVersions.Any(v => v.Description == e.OSVersion)).ToList();
                     if (FFUs.Count > 0)
@@ -893,8 +1058,13 @@ namespace WPinternals
                     ValidatedSupportedFfuPath = SupportedFFUPath;
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                LogFile.Log(ex.Message, LogType.FileAndConsole);
+                LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                 IsSupportedFfuValid = false;
             }
         }
@@ -1025,6 +1195,8 @@ namespace WPinternals
                     {
                         ValidateSupportedFfuPath();
                     }
+
+                    OkCommand.RaiseCanExecuteChanged();
                 }
             }
         }

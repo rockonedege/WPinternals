@@ -20,12 +20,16 @@
 
 using System;
 using System.Threading;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia;
+using WPinternals.Models.Lumia.UEFI.Flash;
+using WPinternals.Models.UEFIApps.Flash;
 
 namespace WPinternals
 {
     internal class NokiaModeFlashViewModel : ContextViewModel
     {
-        private readonly NokiaFlashModel CurrentModel;
+        private readonly LumiaFlashAppModel CurrentModel;
         private readonly Action<PhoneInterfaces?> RequestModeSwitch;
         private readonly object LockDeviceInfo = new();
         private bool DeviceInfoLoaded = false;
@@ -33,7 +37,7 @@ namespace WPinternals
         internal NokiaModeFlashViewModel(NokiaPhoneModel CurrentModel, Action<PhoneInterfaces?> RequestModeSwitch)
             : base()
         {
-            this.CurrentModel = (NokiaFlashModel)CurrentModel;
+            this.CurrentModel = (LumiaFlashAppModel)CurrentModel;
             this.RequestModeSwitch = RequestModeSwitch;
         }
 
@@ -67,7 +71,7 @@ namespace WPinternals
                 {
                     try
                     {
-                        PhoneInfo Info = CurrentModel.ReadPhoneInfo();
+                        LumiaFlashAppPhoneInfo Info = CurrentModel.ReadPhoneInfo();
 
                         if (Info.FlashAppProtocolVersionMajor < 2)
                         {
@@ -84,8 +88,13 @@ namespace WPinternals
 
                         LogFile.Log("Effective Bootloader Security Status: " + EffectiveBootloaderSecurityStatus.ToString());
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                        LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                        LogFile.Log(ex.Message, LogType.FileAndConsole);
+                        LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                         LogFile.Log("Reading status from Flash interface was aborted.");
                     }
                     DeviceInfoLoaded = true;
@@ -102,6 +111,12 @@ namespace WPinternals
                     break;
                 case "Flash":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Flash);
+                    break;
+                case "PhoneInfo":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_PhoneInfo);
+                    break;
+                case "BootMgr":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_Bootloader);
                     break;
                 case "Label":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Label);

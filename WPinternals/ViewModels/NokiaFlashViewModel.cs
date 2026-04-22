@@ -20,6 +20,10 @@
 
 using System;
 using System.Threading;
+using WPinternals.HelperClasses;
+using WPinternals.Models.Lumia;
+using WPinternals.Models.Lumia.UEFI.Flash;
+using WPinternals.Models.UEFIApps.Flash;
 
 namespace WPinternals
 {
@@ -30,7 +34,7 @@ namespace WPinternals
 
     internal class NokiaFlashViewModel : ContextViewModel
     {
-        private readonly NokiaFlashModel CurrentModel;
+        private readonly LumiaFlashAppModel CurrentModel;
         private readonly Action<PhoneInterfaces> RequestModeSwitch;
         internal Action SwitchToGettingStarted;
         private readonly object LockDeviceInfo = new();
@@ -39,7 +43,7 @@ namespace WPinternals
         internal NokiaFlashViewModel(NokiaPhoneModel CurrentModel, Action<PhoneInterfaces> RequestModeSwitch, Action SwitchToGettingStarted)
             : base()
         {
-            this.CurrentModel = (NokiaFlashModel)CurrentModel;
+            this.CurrentModel = (LumiaFlashAppModel)CurrentModel;
             this.RequestModeSwitch = RequestModeSwitch;
             this.SwitchToGettingStarted = SwitchToGettingStarted;
         }
@@ -95,21 +99,21 @@ namespace WPinternals
                             SecurityFlags = (UInt32)CurrentModel.ReadSecurityFlags();
                             LogFile.Log("Security flags: 0x" + SecurityFlags.ToString("X8"));
 
-                            FinalConfigDakStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.Dak);
-                            FinalConfigFastBootStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.FastBoot);
-                            FinalConfigFfuVerifyStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.FfuVerify);
-                            FinalConfigJtagStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.Jtag);
-                            FinalConfigOemIdStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.OemId);
-                            FinalConfigProductionDoneStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.ProductionDone);
-                            FinalConfigPublicIdStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.PublicId);
-                            FinalConfigRkhStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.Rkh);
-                            FinalConfigRpmWdogStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.RpmWdog);
-                            FinalConfigSecGenStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.SecGen);
-                            FinalConfigSecureBootStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.SecureBoot);
-                            FinalConfigShkStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.Shk);
-                            FinalConfigSimlockStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.Simlock);
-                            FinalConfigSpdmSecModeStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.SpdmSecMode);
-                            FinalConfigSsmStatus = CurrentModel.ReadFuseStatus(NokiaFlashModel.Fuse.Ssm);
+                            FinalConfigDakStatus = CurrentModel.ReadFuseStatus(Fuse.Dak);
+                            FinalConfigFastBootStatus = CurrentModel.ReadFuseStatus(Fuse.FastBoot);
+                            FinalConfigFfuVerifyStatus = CurrentModel.ReadFuseStatus(Fuse.FfuVerify);
+                            FinalConfigJtagStatus = CurrentModel.ReadFuseStatus(Fuse.Jtag);
+                            FinalConfigOemIdStatus = CurrentModel.ReadFuseStatus(Fuse.OemId);
+                            FinalConfigProductionDoneStatus = CurrentModel.ReadFuseStatus(Fuse.ProductionDone);
+                            FinalConfigPublicIdStatus = CurrentModel.ReadFuseStatus(Fuse.PublicId);
+                            FinalConfigRkhStatus = CurrentModel.ReadFuseStatus(Fuse.Rkh);
+                            FinalConfigRpmWdogStatus = CurrentModel.ReadFuseStatus(Fuse.RpmWdog);
+                            FinalConfigSecGenStatus = CurrentModel.ReadFuseStatus(Fuse.SecGen);
+                            FinalConfigSecureBootStatus = CurrentModel.ReadFuseStatus(Fuse.SecureBoot);
+                            FinalConfigShkStatus = CurrentModel.ReadFuseStatus(Fuse.Shk);
+                            FinalConfigSimlockStatus = CurrentModel.ReadFuseStatus(Fuse.Simlock);
+                            FinalConfigSpdmSecModeStatus = CurrentModel.ReadFuseStatus(Fuse.SpdmSecMode);
+                            FinalConfigSsmStatus = CurrentModel.ReadFuseStatus(Fuse.Ssm);
                         }
                         else
                         {
@@ -222,15 +226,15 @@ namespace WPinternals
                             LogFile.Log("Charging status: " + ChargingStatus);
                         }
 
-                        PhoneInfo Info = CurrentModel.ReadPhoneInfo(true);
+                        LumiaFlashAppPhoneInfo Info = CurrentModel.ReadPhoneInfo(true);
                         BootloaderDescription = Info.FlashAppProtocolVersionMajor < 2 ? "Lumia Bootloader Spec A" : "Lumia Bootloader Spec B";
 
                         LogFile.Log("Bootloader: " + BootloaderDescription);
 
-                        ProductCode = Info.ProductCode;
+                        ProductCode = "";//TODO: FIXME: Info.ProductCode;
                         LogFile.Log("ProductCode: " + ProductCode);
 
-                        ProductType = Info.Type;
+                        ProductType = "";//TODO: FIXME: Info.Type;
                         LogFile.Log("ProductType: " + ProductType);
 
                         if (RootKeyHash == null)
@@ -282,8 +286,13 @@ namespace WPinternals
                             LogFile.Log("Native Debug Status: " + NativeDebugStatus.ToString());
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        LogFile.Log("An unexpected error happened", LogType.FileAndConsole);
+                        LogFile.Log(ex.GetType().ToString(), LogType.FileAndConsole);
+                        LogFile.Log(ex.Message, LogType.FileAndConsole);
+                        LogFile.Log(ex.StackTrace, LogType.FileAndConsole);
+
                         LogFile.Log("Reading status from Flash interface was aborted.");
                     }
                     DeviceInfoLoaded = true;
@@ -747,6 +756,9 @@ namespace WPinternals
             {
                 case "Normal":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Normal);
+                    break;
+                case "PhoneInfo":
+                    RequestModeSwitch(PhoneInterfaces.Lumia_PhoneInfo);
                     break;
                 case "Label":
                     RequestModeSwitch(PhoneInterfaces.Lumia_Label);

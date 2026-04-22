@@ -20,6 +20,7 @@
 
 using System;
 using System.Threading;
+using WPinternals.HelperClasses;
 
 namespace WPinternals
 {
@@ -256,7 +257,10 @@ namespace WPinternals
                     {
                         EvaluateViewState();
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        LogFile.LogException(ex, LogType.FileOnly);
+                    }
                 }).Start();
         }
 
